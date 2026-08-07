@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+  /* Thème sombre : noir / doré / blanc */
+  --color-brand-100: #f6f5f3; /* titres, quasi-blanc */
+  --color-brand-200: #b3afa6; /* texte secondaire */
+  --color-brand-300: #e8c95f; /* doré clair */
+  --color-brand-400: #d9b647; /* doré */
+  --color-brand-500: #c9a227; /* doré principal (accents, CTA) */
+  --color-brand-600: #a8841c; /* doré foncé */
+  --color-brand-700: #856716;
+  --color-brand-800: #5c470f;
+  --color-brand-900: #2e2408;
+
+  --color-ink: #0a0a0b; /* fond noir */
+  --color-ink-soft: #141416; /* surfaces */
+  --color-ink-line: #26262a; /* bordures */
+
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: var(--color-brand-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  font-family: var(--font-serif);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.gold-gradient-text {
+  background: linear-gradient(100deg, #e8c95f 0%, #c9a227 55%, #a8841c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.card {
+  background: var(--color-ink-soft);
+  border: 1px solid var(--color-ink-line);
+  border-radius: 1rem;
+}
