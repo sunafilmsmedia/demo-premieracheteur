@@ -82,7 +82,7 @@ export const QUESTIONS: QuestionDef[] = [
     type: "multi",
     storeKey: "mustHaves",
     maxSelect: 3,
-    title: "Quels sont tes trois critères les plus importants ?",
+    title: "Quels sont tes 3 critères les plus importants ?",
     options: [
       { value: "garage", label: "Garage" },
       { value: "terrain", label: "Terrain" },

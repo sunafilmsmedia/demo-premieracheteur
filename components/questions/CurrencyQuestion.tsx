@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { formatCurrency, parseCurrency } from "@/lib/format";
 
-const MIN = 50000;
+const MIN = 25000;
 const MAX = 10000000;
 
 export function CurrencyQuestion({
@@ -28,7 +28,7 @@ export function CurrencyQuestion({
         autoFocus
         value={display}
         onChange={(e) => setRaw(parseCurrency(e.target.value))}
-        placeholder="Ex. 350 000 $"
+        placeholder="Ex. 25 000 $"
         className="w-full rounded-xl border border-ink-line bg-ink-soft px-5 py-4 text-center font-display text-2xl text-brand-100 outline-none transition focus:border-brand-500"
       />
       {raw != null && !valid && (
