@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Answers } from "@/lib/types";
 import { config, LEAD_TYPE } from "@/lib/config";
-import { scoreAnswers, budgetOf } from "@/lib/scoring";
+import { scoreAnswers } from "@/lib/scoring";
 import { evaluateQualification } from "@/lib/qualification";
 import { broker } from "@/lib/broker";
 
@@ -64,10 +64,6 @@ export async function POST(req: Request) {
     leadSegment: scoring.segment,
     projectFit: scoring.projectFit,
     secondaryTags: scoring.secondaryTags,
-    financingStatus: answers.financingStatus,
-    approvedBudget: answers.approvedBudget,
-    targetBudget: answers.targetBudget,
-    budget: budgetOf(answers),
     downPayment: answers.downPayment,
     region: answers.region,
     propertyType: answers.propertyType,
@@ -79,7 +75,6 @@ export async function POST(req: Request) {
     ownerStrategy: answers.ownerStrategy,
     salePreparation: answers.salePreparation,
     buyingWith: answers.buyingWith,
-    brokerStatus: answers.brokerStatus,
     consent,
     receivedAt,
     // objets imbriqués

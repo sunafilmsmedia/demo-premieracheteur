@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { Answers, AnalysisReport } from "@/lib/types";
-import {
-  affordableAlternatives,
-  budgetOf,
-  isNotReady,
-  scoreAnswers,
-} from "@/lib/scoring";
+import { isNotReady, scoreAnswers } from "@/lib/scoring";
 import { buildFallbackReport, STANDARD_DISCLAIMER } from "@/lib/fallbackReport";
 import { broker } from "@/lib/broker";
 
 export const runtime = "nodejs";
 
-const SYSTEM_PROMPT = `Tu es un assistant d'analyse de projet d'achat immobilier au Québec, pour les clients d'un courtier hypothécaire. Tu aides un premier acheteur à comprendre la cohérence entre son financement (confirmé ou en cours), son budget, son type de propriété, ses critères et son échéancier. Tu ne remplaces ni un courtier hypothécaire ni un courtier immobilier. Tu ne recalcules JAMAIS la capacité d'emprunt. Tu n'inventes aucune statistique, aucun prix, aucune propriété, aucune donnée de marché, aucune disponibilité. Tu utilises seulement les données reçues et les indications fournies. Si des données manquent, tu le dis. Tu ne promets jamais qu'un achat sera possible. Si le type/secteur choisi est peu réaliste avec le budget, explique-le franchement et propose ce qui EST possible. Si le projet n'est pas prêt (mise de fonds < 20 000 $ en achetant seul), dis-le et recommande de bâtir la mise de fonds ou d'acheter à plusieurs. Ton simple, rassurant, direct, français canadien (tutoiement). Retourne uniquement le JSON demandé, sans markdown.`;
+const SYSTEM_PROMPT = `Tu es un assistant d'analyse de projet d'achat immobilier au Québec, pour les clients d'un courtier hypothécaire. Tu aides un premier acheteur à comprendre où il en est dans sa préparation : sa mise de fonds, son secteur, son type de propriété, ses critères, son échéancier et sa situation résidentielle. Tu ne remplaces ni un courtier hypothécaire ni un courtier immobilier. Tu ne calcules JAMAIS la capacité d'emprunt. Tu n'inventes aucune statistique, aucun prix, aucune propriété, aucune donnée de marché, aucune disponibilité. Tu utilises seulement les données reçues. Si des données manquent, tu le dis. Tu ne promets jamais qu'un achat sera possible. Si le projet n'est pas prêt (mise de fonds < 20 000 $ en achetant seul), dis-le et recommande de bâtir la mise de fonds ou d'acheter à plusieurs. Tu encourages toujours à valider le financement avec le courtier. Ton simple, rassurant, direct, français canadien (tutoiement). Retourne uniquement le JSON demandé, sans markdown.`;
 
 function buildUserPrompt(a: Answers, deterministic: object): string {
   return `Voici les réponses de l'acheteur (JSON) :
@@ -63,9 +58,7 @@ export async function POST(req: Request) {
   const deterministic = {
     projectFit: scoring.projectFit,
     segment: scoring.segment,
-    budget: budgetOf(answers),
     notReady: isNotReady(answers),
-    affordableAlternatives: affordableAlternatives(answers),
     disclaimer: STANDARD_DISCLAIMER,
   };
 

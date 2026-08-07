@@ -1,11 +1,5 @@
 // Modèle de données partagé client + serveur.
 
-export type FinancingStatus =
-  | "preapproved"
-  | "prequalified"
-  | "in_process"
-  | "not_started";
-
 export type BuyingWith = "alone" | "cobuyer";
 
 export type PropertyType = "house" | "condo" | "townhouse" | "plex" | "open";
@@ -28,14 +22,9 @@ export type SalePreparation =
   | "already_listed"
   | "accepted_offer";
 
-export type BrokerStatus = "none" | "talking_unsigned" | "under_contract";
-
 export type FirstTimeBuyer = "yes" | "owned_before";
 
 export interface Answers {
-  financingStatus?: FinancingStatus;
-  approvedBudget?: number;
-  targetBudget?: number;
   downPayment?: number;
   buyingWith?: BuyingWith;
   region?: string;
@@ -47,17 +36,11 @@ export interface Answers {
   currentHousing?: CurrentHousing;
   ownerStrategy?: OwnerStrategy;
   salePreparation?: SalePreparation;
-  brokerStatus?: BrokerStatus;
 }
 
 export type FitLevel = "strong" | "possible" | "tight" | "unknown";
 
-export type LeadSegment =
-  | "priority"
-  | "qualified"
-  | "nurture"
-  | "early_stage"
-  | "represented";
+export type LeadSegment = "priority" | "qualified" | "nurture" | "early_stage";
 
 export interface ScoringResult {
   score: number;

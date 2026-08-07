@@ -25,40 +25,11 @@ export interface QuestionDef {
 
 export const QUESTIONS: QuestionDef[] = [
   {
-    id: "financing",
-    type: "choice",
-    storeKey: "financingStatus",
-    autoAdvance: true,
-    title: "Où en es-tu avec ton financement ?",
-    note: "On ne calcule pas ta capacité d'emprunt. Cette information sert seulement à voir où tu en es dans ton projet.",
-    options: [
-      { value: "preapproved", label: "Je suis préapprouvé" },
-      { value: "prequalified", label: "Je suis préqualifié" },
-      { value: "in_process", label: "Je fais mes démarches" },
-      { value: "not_started", label: "Je n'ai pas encore commencé" },
-    ],
-  },
-  {
-    id: "budget",
-    type: "currency",
-    storeKey: "targetBudget",
-    storeKeyFn: (a) =>
-      a.financingStatus === "preapproved" || a.financingStatus === "prequalified"
-        ? "approvedBudget"
-        : "targetBudget",
-    optional: false,
-    title: (a) =>
-      a.financingStatus === "preapproved" || a.financingStatus === "prequalified"
-        ? "Pour quel montant es-tu préapprouvé ou préqualifié ?"
-        : "Quel budget approximatif vises-tu ?",
-    note: "Montant à valider — il sert à évaluer la cohérence de ton projet, jamais comme une approbation.",
-  },
-  {
     id: "downPayment",
     type: "currency",
     storeKey: "downPayment",
     title: "Quelle mise de fonds as-tu accumulée jusqu'à maintenant ?",
-    note: "Aucun calcul hypothécaire — c'est pour comprendre où tu en es dans ta préparation.",
+    note: "Aucun calcul de capacité d'emprunt — c'est pour comprendre où tu en es dans ta préparation.",
   },
   {
     id: "buyingWith",
@@ -191,18 +162,6 @@ export const QUESTIONS: QuestionDef[] = [
       { value: "preparing", label: "Je la prépare" },
       { value: "already_listed", label: "Elle est déjà en vente" },
       { value: "accepted_offer", label: "J'ai une offre acceptée" },
-    ],
-  },
-  {
-    id: "brokerStatus",
-    type: "choice",
-    storeKey: "brokerStatus",
-    autoAdvance: true,
-    title: "Travailles-tu déjà avec un courtier hypothécaire ?",
-    options: [
-      { value: "none", label: "Non" },
-      { value: "talking_unsigned", label: "J'en consulte un, mais rien de signé" },
-      { value: "under_contract", label: "Oui, j'ai un dossier en cours avec un courtier" },
     ],
   },
 ];

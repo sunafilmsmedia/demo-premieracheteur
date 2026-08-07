@@ -4,7 +4,6 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { AnalysisReport, Answers, FitLevel, ScoringResult } from "@/lib/types";
 import { broker } from "@/lib/broker";
-import { budgetOf } from "@/lib/scoring";
 import { formatCurrency } from "@/lib/format";
 import { PROPERTY_LABELS } from "@/lib/market";
 import { ContactForm } from "./ContactForm";
@@ -89,7 +88,6 @@ export function ResultsScreen({
   const [unlockRequested, setUnlockRequested] = useState(false);
 
   const showFull = (revealMode === "full" || unlockRequested) && submitted;
-  const budget = budgetOf(answers);
 
   // — Écran verrouillé : coordonnées avant révélation complète —
   if ((revealMode === "full" || unlockRequested) && !submitted) {
@@ -181,10 +179,6 @@ export function ResultsScreen({
               value={answers.propertyType ? PROPERTY_LABELS[answers.propertyType] : "—"}
             />
             <Item label="Chambres" value={answers.bedrooms ? String(answers.bedrooms) : "—"} />
-            <Item
-              label={answers.approvedBudget ? "Budget (à valider)" : "Budget souhaité"}
-              value={formatCurrency(budget)}
-            />
             <Item label="Échéancier" value={TIMELINE_LABEL[answers.purchaseTimeline ?? "exploring"]} />
             <Item label="Mise de fonds" value={formatCurrency(answers.downPayment)} />
           </dl>

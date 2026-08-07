@@ -7,18 +7,11 @@ import { Hero } from "@/components/Hero";
 import { QualificationForm } from "@/components/QualificationForm";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { PreRevealScreen } from "@/components/PreRevealScreen";
-import { DisqualifiedScreen } from "@/components/DisqualifiedScreen";
 import { ResultsScreen } from "@/components/results/ResultsScreen";
 
-type Stage =
-  | "hero"
-  | "form"
-  | "loading"
-  | "preReveal"
-  | "results"
-  | "disqualified";
+type Stage = "hero" | "form" | "loading" | "preReveal" | "results";
 
-const LOGO_STAGES: Stage[] = ["hero", "preReveal", "results", "disqualified"];
+const LOGO_STAGES: Stage[] = ["hero", "preReveal", "results"];
 
 export default function Page() {
   const [stage, setStage] = useState<Stage>("hero");
@@ -69,7 +62,6 @@ export default function Page() {
       {stage === "form" && (
         <QualificationForm
           onComplete={handleComplete}
-          onDisqualified={() => setStage("disqualified")}
           onExit={() => setStage("hero")}
         />
       )}
@@ -94,8 +86,6 @@ export default function Page() {
           onRestart={reset}
         />
       )}
-
-      {stage === "disqualified" && <DisqualifiedScreen onBack={reset} />}
     </main>
   );
 }

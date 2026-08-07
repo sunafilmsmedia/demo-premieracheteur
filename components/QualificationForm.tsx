@@ -17,15 +17,15 @@ import { MultiChoiceQuestion } from "./questions/MultiChoiceQuestion";
 
 export function QualificationForm({
   onComplete,
-  onDisqualified,
   onExit,
 }: {
   onComplete: (answers: Answers) => void;
-  onDisqualified: () => void;
   onExit: () => void;
 }) {
   const [answers, setAnswers] = useState<Answers>({});
-  const [currentId, setCurrentId] = useState("financing");
+  const [currentId, setCurrentId] = useState(
+    () => getVisibleQuestions({})[0].id
+  );
   const [overlay, setOverlay] = useState<string | null>(null);
 
   const visible = useMemo(() => getVisibleQuestions(answers), [answers]);
@@ -44,10 +44,6 @@ export function QualificationForm({
   }
 
   function finish(next: Answers) {
-    if (next.brokerStatus === "under_contract") {
-      onDisqualified();
-      return;
-    }
     setOverlay("Bien reçu ! On prépare ton analyse…");
     setTimeout(() => onComplete(next), 1000);
   }
@@ -58,13 +54,8 @@ export function QualificationForm({
   }
 
   function handleChoice(value: string) {
-    // Cas spécial : dernière question → disqualification immédiate visuelle.
     const next = store(question, value, answers);
     setAnswers(next);
-    if (question.id === "brokerStatus" && value === "under_contract") {
-      setTimeout(() => onDisqualified(), 220);
-      return;
-    }
     setTimeout(() => advanceFrom(next, question.id), 220);
   }
 

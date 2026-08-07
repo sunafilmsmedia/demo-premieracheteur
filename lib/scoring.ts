@@ -1,102 +1,59 @@
 import { Answers, FitLevel, LeadSegment, ScoringResult } from "./types";
-import { MARKET_RANGES, PROPERTY_LABELS } from "./market";
 
-// ── Financement : barème INVERSÉ pour un courtier hypothécaire ──
-// Le meilleur prospect est celui qui a encore besoin d'un courtier.
-const FINANCING_SCORE: Record<string, number> = {
-  in_process: 35, // fait ses démarches maintenant → chaud
-  not_started: 28, // doit commencer → le courtier peut l'accompagner
-  prequalified: 18, // a une préqualif (souvent bancaire) → convertible
-  preapproved: 8, // déjà financé ailleurs → faible valeur pour un courtier hypo
-};
+// Scoring reconstruit sans financement ni budget (questions retirées).
+// Signaux disponibles : échéancier, mise de fonds, situation, 1er achat.
 
+// ── Échéancier (max 40) — le plus fort signal d'intention ──
 const TIMELINE_SCORE: Record<string, number> = {
-  asap: 25,
-  "0_3_months": 23,
-  "3_6_months": 16,
-  "6_12_months": 8,
+  asap: 40,
+  "0_3_months": 35,
+  "3_6_months": 25,
+  "6_12_months": 12,
   exploring: 0,
 };
 
-const BROKER_SCORE: Record<string, number> = {
-  none: 20,
-  talking_unsigned: 10,
-  under_contract: 0,
-};
+// ── Mise de fonds (max 35) — état de préparation concret ──
+function downPaymentScore(a: Answers): number {
+  const d = a.downPayment ?? 0;
+  if (d >= 50000) return 35;
+  if (d >= 30000) return 28;
+  if (d >= 20000) return 20;
+  if (d >= 10000) return 12;
+  return 6;
+}
 
-const FIT_SCORE: Record<FitLevel, number> = {
-  strong: 10,
-  possible: 6,
-  tight: 2,
-  unknown: 4, // ne jamais pénaliser l'absence de données
-};
-
+// ── Situation résidentielle (max 15) ──
 function housingScore(a: Answers): number {
   switch (a.currentHousing) {
     case "renter":
     case "with_family":
-      return 10;
+      return 15;
     case "owner":
-      if (a.ownerStrategy === "no_sale_needed") return 8;
+      if (a.ownerStrategy === "no_sale_needed") return 12;
       if (a.ownerStrategy === "must_sell") {
         switch (a.salePreparation) {
           case "accepted_offer":
-            return 10;
+            return 15;
           case "already_listed":
-            return 7;
+            return 11;
           case "preparing":
           case "valuation_done":
-            return 5;
+            return 8;
           default:
-            return 2;
+            return 4;
         }
       }
-      return 5;
+      return 8;
     default:
       return 0;
   }
 }
 
-export function budgetOf(a: Answers): number | undefined {
-  return a.approvedBudget ?? a.targetBudget;
-}
-
-// Cohérence budget / type de projet — déterministe, jamais « impossible ».
-export function evaluateProjectFit(a: Answers): FitLevel {
-  const budget = budgetOf(a);
-  if (!budget || !a.propertyType) return "unknown";
-  const [low] = MARKET_RANGES[a.propertyType];
-  if (budget < low) return "tight";
-  const down = a.downPayment ?? 0;
-  const ratio = down / budget;
-  return ratio >= 0.05 ? "strong" : "possible";
-}
-
-// « Ce qui EST possible » quand le budget est serré pour le type choisi.
-export function affordableAlternatives(
-  a: Answers
-): { message: string; alternatives: string[] } | null {
-  const budget = budgetOf(a);
-  if (!budget || !a.propertyType) return null;
-  if (budget >= MARKET_RANGES[a.propertyType][0]) return null;
-
-  const alternatives = (Object.keys(MARKET_RANGES) as (keyof typeof MARKET_RANGES)[])
-    .filter((t) => t !== "open" && t !== a.propertyType)
-    .filter((t) => budget >= MARKET_RANGES[t][0])
-    .map((t) => PROPERTY_LABELS[t]);
-
-  if (alternatives.length === 0) {
-    return {
-      message:
-        "Ce budget est encore serré pour ce type de propriété. Bâtir ta mise de fonds ou ajuster le projet avec un courtier ouvrira des options.",
-      alternatives: [],
-    };
-  }
-
-  return {
-    message: `Avec ce budget, ${PROPERTY_LABELS[a.propertyType]} reste ambitieux. Tu pourrais plutôt viser : ${alternatives.join(", ")}.`,
-    alternatives,
-  };
+// ── Premier achat (max 10) — prospect prioritaire pour un courtier hypo ──
+function firstBuyerScore(a: Answers): number {
+  if (a.firstTimeBuyer === "yes") return 10;
+  if (a.firstTimeBuyer === "owned_before") return 6;
+  return 0;
 }
 
 // Projet pas encore prêt : mise de fonds faible en achetant seul.
@@ -106,8 +63,18 @@ export function isNotReady(a: Answers): boolean {
   );
 }
 
-function segmentFor(score: number, a: Answers): LeadSegment {
-  if (a.brokerStatus === "under_contract") return "represented";
+// Niveau de préparation global (pour le verdict / rapport).
+export function projectReadiness(a: Answers): "ready" | "advancing" | "early" {
+  if (isNotReady(a)) return "early";
+  const soon =
+    a.purchaseTimeline === "asap" || a.purchaseTimeline === "0_3_months";
+  const down = a.downPayment ?? 0;
+  if (soon && down >= 20000) return "ready";
+  if (a.purchaseTimeline === "exploring") return "early";
+  return "advancing";
+}
+
+function segmentFor(score: number): LeadSegment {
   if (score >= 80) return "priority";
   if (score >= 60) return "qualified";
   if (score >= 35) return "nurture";
@@ -115,15 +82,12 @@ function segmentFor(score: number, a: Answers): LeadSegment {
 }
 
 export function scoreAnswers(a: Answers): ScoringResult {
-  const projectFit = evaluateProjectFit(a);
-
   const score = Math.min(
     100,
-    (FINANCING_SCORE[a.financingStatus ?? ""] ?? 0) +
-      (TIMELINE_SCORE[a.purchaseTimeline ?? ""] ?? 0) +
-      (BROKER_SCORE[a.brokerStatus ?? ""] ?? 0) +
+    (TIMELINE_SCORE[a.purchaseTimeline ?? ""] ?? 0) +
+      downPaymentScore(a) +
       housingScore(a) +
-      FIT_SCORE[projectFit]
+      firstBuyerScore(a)
   );
 
   const secondaryTags: string[] = [];
@@ -137,9 +101,12 @@ export function scoreAnswers(a: Answers): ScoringResult {
     secondaryTags.push("down_payment_coaching");
   }
 
+  // Sans budget confirmé, la compatibilité reste toujours à valider.
+  const projectFit: FitLevel = "unknown";
+
   return {
     score,
-    segment: segmentFor(score, a),
+    segment: segmentFor(score),
     projectFit,
     secondaryTags,
   };
