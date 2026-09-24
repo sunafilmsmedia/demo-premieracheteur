@@ -25,8 +25,8 @@ export function Hero({ onStart }: { onStart: () => void }) {
           transition={{ duration: 0.6, delay: 0.05 }}
           className="font-display text-4xl leading-[1.05] text-brand-100 sm:text-5xl"
         >
-          Prêt pour ta{" "}
-          <span className="gold-gradient-text">première propriété</span> ?
+          Qu&apos;est-ce que tu peux{" "}
+          <span className="gold-gradient-text">vraiment acheter</span> ?
         </motion.h1>
 
         <motion.p
@@ -35,9 +35,9 @@ export function Hero({ onStart }: { onStart: () => void }) {
           transition={{ duration: 0.6, delay: 0.12 }}
           className="mx-auto mt-5 max-w-xl text-base text-brand-200 sm:text-lg"
         >
-          Réponds à quelques questions et découvre où tu en es dans ton projet
-          d&apos;achat — et les prochaines étapes concrètes vers ta
-          préapprobation.
+          Réponds à quelques questions et découvre ton vrai pouvoir
+          d&apos;achat — la fourchette réaliste pour ta situation, et les
+          prochaines étapes pour y arriver.
         </motion.p>
 
         <motion.div
@@ -54,7 +54,7 @@ export function Hero({ onStart }: { onStart: () => void }) {
             <span className="transition group-hover:translate-x-0.5">→</span>
           </button>
           <p className="mt-4 text-xs text-brand-200">
-            Gratuit · Environ 2 minutes · Aucun calcul hypothécaire
+            Gratuit · Environ 2 minutes · Estimation indicative
           </p>
         </motion.div>
       </div>
