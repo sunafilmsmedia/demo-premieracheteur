@@ -12,6 +12,8 @@
   --color-brand-800: #5c470f;
   --color-brand-900: #2e2408;
 
+  --color-gold: #c9a227; /* alias doré principal (utilisé par certains composants) */
+
   --color-ink: #0a0a0b; /* fond noir */
   --color-ink-soft: #141416; /* surfaces */
   --color-ink-line: #26262a; /* bordures */
@@ -49,4 +51,13 @@ body {
   background: var(--color-ink-soft);
   border: 1px solid var(--color-ink-line);
   border-radius: 1rem;
+}
+
+/* Surface « verre » sombre — utilisée par les écrans portés du kit acheteur */
+.glass-card {
+  background: rgba(20, 20, 22, 0.72);
+  border: 1px solid var(--color-ink-line);
+  border-radius: 1rem;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }

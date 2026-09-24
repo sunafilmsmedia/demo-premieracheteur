@@ -1,179 +1,162 @@
-import { Answers } from "./types";
+import type { Answers } from "./types";
 
-export type QuestionType = "choice" | "currency" | "bedrooms" | "multi";
+export type QuestionId =
+  | "financingStatus"
+  | "propertyType"
+  | "regions"
+  | "purchaseTimeline"
+  | "journeyStage"
+  | "buyingWith"
+  | "householdIncome"
+  | "downPayment"
+  | "currentHomeValue"
+  | "employment";
 
-export interface QuestionOption {
-  value: string;
+export type QuestionKind = "choice" | "regions" | "currency";
+
+export interface Choice<V extends string = string> {
+  value: V;
   label: string;
-  exclusive?: boolean; // multi : désélectionne les autres
+  hint?: string;
 }
 
 export interface QuestionDef {
-  id: string;
-  type: QuestionType;
-  // Clé de stockage par défaut. Le budget la calcule dynamiquement.
-  storeKey: keyof Answers;
-  storeKeyFn?: (a: Answers) => keyof Answers;
-  title: string | ((a: Answers) => string);
-  note?: string;
-  options?: QuestionOption[];
+  id: QuestionId;
+  kind: QuestionKind;
+  title: string;
+  subtitle?: string;
+  choices?: Choice[];
   autoAdvance?: boolean;
-  optional?: boolean;
-  maxSelect?: number;
-  visible?: (a: Answers) => boolean;
+  showIf?: (a: Answers) => boolean;
 }
 
 export const QUESTIONS: QuestionDef[] = [
   {
-    id: "downPayment",
-    type: "currency",
-    storeKey: "downPayment",
-    title: "Quelle mise de fonds as-tu accumulée jusqu'à maintenant ?",
-    note: "Aucun calcul de capacité d'emprunt — c'est pour comprendre où tu en es dans ta préparation.",
-  },
-  {
-    id: "buyingWith",
-    type: "choice",
-    storeKey: "buyingWith",
+    id: "financingStatus",
+    kind: "choice",
+    title: "Es-tu déjà préqualifié pour une hypothèque ?",
+    subtitle: "Aucune mauvaise réponse — ça nous dit simplement où tu en es.",
     autoAdvance: true,
-    visible: (a) => (a.downPayment ?? Infinity) < 20000,
-    title: "Achètes-tu seul ou à plusieurs ?",
-    options: [
-      { value: "alone", label: "J'achète seul" },
-      { value: "cobuyer", label: "À plusieurs (conjoint, famille, associé…)" },
-    ],
-  },
-  {
-    id: "region",
-    type: "choice",
-    storeKey: "region",
-    autoAdvance: true,
-    title: "Dans quel secteur cherches-tu à acheter ?",
-    options: [
-      { value: "Montréal", label: "Montréal" },
-      { value: "Rive-Sud", label: "Rive-Sud" },
-      { value: "Rive-Nord / Laval", label: "Rive-Nord / Laval" },
-      { value: "Ailleurs au Québec", label: "Ailleurs au Québec" },
+    choices: [
+      { value: "preapproved", label: "Oui, je suis préapprouvé", hint: "Une lettre d'un prêteur en main" },
+      { value: "prequalified", label: "Oui, je suis préqualifié", hint: "Un montant estimé par un courtier hypothécaire" },
+      { value: "in_process", label: "C'est en cours", hint: "J'ai commencé les démarches" },
+      { value: "not_started", label: "Pas encore", hint: "Je n'ai rien commencé de ce côté" },
     ],
   },
   {
     id: "propertyType",
-    type: "choice",
-    storeKey: "propertyType",
+    kind: "choice",
+    title: "Quel type de propriété t'intéresse le plus ?",
+    subtitle: "Celui vers lequel tu penches aujourd'hui.",
     autoAdvance: true,
-    title: "Quel type de propriété recherches-tu ?",
-    options: [
-      { value: "house", label: "Maison unifamiliale" },
-      { value: "condo", label: "Condo" },
-      { value: "townhouse", label: "Maison de ville" },
-      { value: "plex", label: "Duplex ou plex" },
-      { value: "open", label: "Je suis ouvert" },
+    choices: [
+      { value: "maison", label: "Maison unifamiliale", hint: "Détachée ou jumelée" },
+      { value: "condo", label: "Condo", hint: "Copropriété" },
+      { value: "plex", label: "Plex", hint: "Duplex, triplex, multilogement" },
+      { value: "chalet", label: "Chalet", hint: "Résidence secondaire ou bord de l'eau" },
+      { value: "ouvert", label: "Je suis ouvert", hint: "Ça dépend de l'opportunité" },
     ],
   },
   {
-    id: "bedrooms",
-    type: "bedrooms",
-    storeKey: "bedrooms",
-    autoAdvance: true,
-    title: "De combien de chambres as-tu besoin ?",
+    id: "regions",
+    kind: "regions",
+    title: "Quels secteurs t'intéressent le plus ?",
+    subtitle: "Choisis-en jusqu'à 3 — ou écris le tien.",
   },
   {
-    id: "mustHaves",
-    type: "multi",
-    storeKey: "mustHaves",
-    maxSelect: 3,
-    title: "Quels sont tes 3 critères les plus importants ?",
-    options: [
-      { value: "garage", label: "Garage" },
-      { value: "terrain", label: "Terrain" },
-      { value: "stationnement", label: "Stationnement" },
-      { value: "sous_sol", label: "Sous-sol" },
-      { value: "recente", label: "Construction récente" },
-      { value: "transport", label: "Transport en commun" },
-      { value: "ecoles", label: "Proximité des écoles" },
-      { value: "renover", label: "Possibilité de rénover" },
-      { value: "faibles_frais", label: "Faibles frais de condo" },
-      { value: "intergen", label: "Intergénération" },
-      { value: "aucun", label: "Aucun critère indispensable", exclusive: true },
-    ],
-  },
-  {
-    id: "firstTimeBuyer",
-    type: "choice",
-    storeKey: "firstTimeBuyer",
+    id: "purchaseTimeline",
+    kind: "choice",
+    title: "Dans combien de temps aimerais-tu acheter ?",
+    subtitle: "Ton meilleur estimé, sans pression.",
     autoAdvance: true,
-    title: "Est-ce que ce serait ta première propriété ?",
-    note: "Ça oriente les programmes possibles (CELIAPP, RAP, remboursement de droits…).",
-    options: [
-      { value: "yes", label: "Oui, c'est ma première" },
-      { value: "owned_before", label: "J'ai déjà été propriétaire" },
-    ],
-  },
-  {
-    id: "timeline",
-    type: "choice",
-    storeKey: "purchaseTimeline",
-    autoAdvance: true,
-    title: "À quel moment aimerais-tu acheter ?",
-    options: [
+    choices: [
       { value: "asap", label: "Dès que je trouve la bonne propriété" },
-      { value: "0_3_months", label: "Dans les 3 prochains mois" },
-      { value: "3_6_months", label: "Dans 3 à 6 mois" },
-      { value: "6_12_months", label: "Dans 6 à 12 mois" },
-      { value: "exploring", label: "Je veux simplement explorer" },
+      { value: "0_3_mois", label: "Dans les 3 prochains mois" },
+      { value: "3_6_mois", label: "Dans 3 à 6 mois" },
+      { value: "6_12_mois", label: "Dans 6 à 12 mois" },
+      { value: "plus_12_mois", label: "Dans plus de 12 mois", hint: "Je prépare mon projet" },
     ],
   },
   {
-    id: "currentHousing",
-    type: "choice",
-    storeKey: "currentHousing",
+    id: "journeyStage",
+    kind: "choice",
+    title: "Où en es-tu dans ton parcours ?",
+    subtitle: "Pour adapter notre accompagnement à ta situation.",
     autoAdvance: true,
-    title: "Quelle est ta situation actuellement ?",
-    options: [
-      { value: "renter", label: "Je suis locataire" },
-      { value: "owner", label: "Je suis propriétaire" },
-      { value: "with_family", label: "J'habite avec ma famille" },
-      { value: "other", label: "Autre" },
+    choices: [
+      { value: "premiere_maison", label: "Ce sera ma première maison" },
+      { value: "investisseur", label: "Je suis investisseur" },
+      { value: "vendre_pour_acheter", label: "Je dois vendre pour acheter" },
+      { value: "separation", label: "Je suis en séparation" },
     ],
   },
   {
-    id: "ownerStrategy",
-    type: "choice",
-    storeKey: "ownerStrategy",
+    id: "buyingWith",
+    kind: "choice",
+    title: "Tu achètes seul(e) ou avec un co-acheteur ?",
+    subtitle: "Ça change ce qui est réaliste pour ton budget.",
     autoAdvance: true,
-    visible: (a) => a.currentHousing === "owner",
-    title: "Pour acheter, où en es-tu avec ta propriété actuelle ?",
-    options: [
-      { value: "must_sell", label: "Je dois vendre avant d'acheter" },
-      { value: "no_sale_needed", label: "Je peux acheter sans vendre" },
+    choices: [
+      { value: "seul", label: "Seul(e)" },
+      { value: "co_acheteur", label: "Avec un co-acheteur", hint: "Conjoint(e), parent, ami(e)…" },
+      { value: "co_acheteurs", label: "Avec plus d'un co-acheteur", hint: "Deux co-acheteurs ou plus" },
     ],
   },
   {
-    id: "salePreparation",
-    type: "choice",
-    storeKey: "salePreparation",
+    id: "householdIncome",
+    kind: "currency",
+    title: "Quel est le revenu brut annuel du ménage ?",
+    subtitle: "Avant impôts, en additionnant les revenus de tous les acheteurs.",
+  },
+  {
+    id: "downPayment",
+    kind: "currency",
+    title: "Combien as-tu de disponible pour la mise de fonds ?",
+    subtitle: "Ce qui est réellement disponible aujourd'hui — REER et CELIAPP inclus.",
+    // Quelqu'un qui doit vendre avant d'acheter n'a pas de mise de fonds à
+    // déclarer : elle sortira de sa vente. On lui pose l'autre question.
+    showIf: (a) => a.journeyStage !== "vendre_pour_acheter",
+  },
+  {
+    id: "currentHomeValue",
+    kind: "currency",
+    title: "Combien vaut ta propriété actuelle, selon toi ?",
+    subtitle: "Ton estimation à toi — c'est de là que viendra ta mise de fonds.",
+    showIf: (a) => a.journeyStage === "vendre_pour_acheter",
+  },
+  {
+    id: "employment",
+    kind: "choice",
+    title: "Quelle est ta situation d'emploi ?",
+    subtitle: "C'est ce que les prêteurs regardent en premier.",
     autoAdvance: true,
-    visible: (a) =>
-      a.currentHousing === "owner" && a.ownerStrategy === "must_sell",
-    title: "Où en es-tu avec la vente de ta propriété actuelle ?",
-    options: [
-      { value: "not_started", label: "Je n'ai pas commencé" },
-      { value: "valuation_done", label: "J'ai fait évaluer" },
-      { value: "preparing", label: "Je la prépare" },
-      { value: "already_listed", label: "Elle est déjà en vente" },
-      { value: "accepted_offer", label: "J'ai une offre acceptée" },
+    choices: [
+      { value: "salarie_permanent", label: "Salarié permanent", hint: "Temps plein" },
+      { value: "salarie_contrat", label: "Salarié à contrat ou temps partiel", hint: "Saisonnier, contractuel" },
+      { value: "autonome", label: "Travailleur autonome" },
+      { value: "entrepreneur", label: "Entrepreneur", hint: "Propriétaire d'entreprise" },
+      { value: "retraite", label: "Retraité" },
+      { value: "transition", label: "En transition", hint: "Entre deux emplois, études…" },
     ],
   },
 ];
 
-export function getVisibleQuestions(a: Answers): QuestionDef[] {
-  return QUESTIONS.filter((q) => (q.visible ? q.visible(a) : true));
+export function getVisibleQuestions(answers: Answers): QuestionDef[] {
+  return QUESTIONS.filter((q) => !q.showIf || q.showIf(answers));
 }
 
-export function resolveStoreKey(q: QuestionDef, a: Answers): keyof Answers {
-  return q.storeKeyFn ? q.storeKeyFn(a) : q.storeKey;
-}
-
-export function getTitle(q: QuestionDef, a: Answers): string {
-  return typeof q.title === "function" ? q.title(a) : q.title;
+export function isAnswered(q: QuestionDef, a: Answers): boolean {
+  switch (q.id) {
+    case "financingStatus": return !!a.financingStatus;
+    case "propertyType": return !!a.propertyType;
+    case "regions": return Array.isArray(a.regions) && a.regions.length >= 1;
+    case "purchaseTimeline": return !!a.purchaseTimeline;
+    case "journeyStage": return !!a.journeyStage;
+    case "buyingWith": return !!a.buyingWith;
+    case "householdIncome": return typeof a.householdIncome === "number" && a.householdIncome > 0;
+    case "downPayment": return typeof a.downPayment === "number" && a.downPayment >= 0;
+    case "currentHomeValue": return typeof a.currentHomeValue === "number" && a.currentHomeValue > 0;
+    case "employment": return !!a.employment;
+  }
 }

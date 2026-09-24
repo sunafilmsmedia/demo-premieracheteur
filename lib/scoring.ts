@@ -1,113 +1,160 @@
-import { Answers, FitLevel, LeadSegment, ScoringResult } from "./types";
+import { computeCapacity } from "./capacity";
+import type { Answers, ScoringFactor, ScoringResult, Verdict } from "./types";
 
-// Scoring reconstruit sans financement ni budget (questions retirées).
-// Signaux disponibles : échéancier, mise de fonds, situation, 1er achat.
+const BASE_SCORE = 32;
 
-// ── Échéancier (max 40) — le plus fort signal d'intention ──
-const TIMELINE_SCORE: Record<string, number> = {
-  asap: 40,
-  "0_3_months": 35,
-  "3_6_months": 25,
-  "6_12_months": 12,
-  exploring: 0,
-};
-
-// ── Mise de fonds (max 35) — état de préparation concret ──
-function downPaymentScore(a: Answers): number {
-  const d = a.downPayment ?? 0;
-  if (d >= 50000) return 35;
-  if (d >= 30000) return 28;
-  if (d >= 20000) return 20;
-  if (d >= 10000) return 12;
-  return 6;
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
 }
 
-// ── Situation résidentielle (max 15) ──
-function housingScore(a: Answers): number {
-  switch (a.currentHousing) {
-    case "renter":
-    case "with_family":
-      return 15;
-    case "owner":
-      if (a.ownerStrategy === "no_sale_needed") return 12;
-      if (a.ownerStrategy === "must_sell") {
-        switch (a.salePreparation) {
-          case "accepted_offer":
-            return 15;
-          case "already_listed":
-            return 11;
-          case "preparing":
-          case "valuation_done":
-            return 8;
-          default:
-            return 4;
-        }
-      }
-      return 8;
-    default:
-      return 0;
-  }
-}
+export function computeScoring(answers: Answers): ScoringResult {
+  const factors: ScoringFactor[] = [];
+  const capacity = computeCapacity(answers);
+  let score = BASE_SCORE;
 
-// ── Premier achat (max 10) — prospect prioritaire pour un courtier hypo ──
-function firstBuyerScore(a: Answers): number {
-  if (a.firstTimeBuyer === "yes") return 10;
-  if (a.firstTimeBuyer === "owned_before") return 6;
-  return 0;
-}
-
-// Projet pas encore prêt : mise de fonds faible en achetant seul.
-export function isNotReady(a: Answers): boolean {
-  return (
-    a.downPayment != null && a.downPayment < 20000 && a.buyingWith === "alone"
-  );
-}
-
-// Niveau de préparation global (pour le verdict / rapport).
-export function projectReadiness(a: Answers): "ready" | "advancing" | "early" {
-  if (isNotReady(a)) return "early";
-  const soon =
-    a.purchaseTimeline === "asap" || a.purchaseTimeline === "0_3_months";
-  const down = a.downPayment ?? 0;
-  if (soon && down >= 20000) return "ready";
-  if (a.purchaseTimeline === "exploring") return "early";
-  return "advancing";
-}
-
-function segmentFor(score: number): LeadSegment {
-  if (score >= 80) return "priority";
-  if (score >= 60) return "qualified";
-  if (score >= 35) return "nurture";
-  return "early_stage";
-}
-
-export function scoreAnswers(a: Answers): ScoringResult {
-  const score = Math.min(
-    100,
-    (TIMELINE_SCORE[a.purchaseTimeline ?? ""] ?? 0) +
-      downPaymentScore(a) +
-      housingScore(a) +
-      firstBuyerScore(a)
-  );
-
-  const secondaryTags: string[] = [];
-  if (a.currentHousing === "owner" && a.ownerStrategy === "must_sell") {
-    secondaryTags.push("seller_buyer_opportunity");
-  }
-  if (a.firstTimeBuyer === "yes") {
-    secondaryTags.push("first_time_buyer");
-  }
-  if (isNotReady(a)) {
-    secondaryTags.push("down_payment_coaching");
-  }
-
-  // Sans budget confirmé, la compatibilité reste toujours à valider.
-  const projectFit: FitLevel = "unknown";
-
-  return {
-    score,
-    segment: segmentFor(score),
-    projectFit,
-    secondaryTags,
+  const add = (delta: number, label: string, tone: ScoringFactor["tone"]) => {
+    score += delta;
+    factors.push({ label, delta, tone });
   };
+
+  // ── Financement ───────────────────────────────────────────────────────────
+  switch (answers.financingStatus) {
+    case "preapproved":
+      add(18, "Préapprobation en main — tu peux déposer une offre solide", "positive");
+      break;
+    case "prequalified":
+      add(12, "Préqualification obtenue — la base est faite", "positive");
+      break;
+    case "in_process":
+      add(5, "Démarches de financement déjà entamées", "neutral");
+      break;
+    case "not_started":
+      add(-8, "Financement pas encore amorcé", "negative");
+      break;
+  }
+
+  // ── Échéancier ────────────────────────────────────────────────────────────
+  switch (answers.purchaseTimeline) {
+    case "asap":
+    case "0_3_mois":
+      add(12, "Achat visé à court terme", "positive");
+      break;
+    case "3_6_mois":
+      add(7, "Achat visé dans 3 à 6 mois", "positive");
+      break;
+    case "6_12_mois":
+      add(2, "Achat visé dans 6 à 12 mois", "neutral");
+      break;
+    case "plus_12_mois":
+      // Court-circuité vers la vidéo long terme — n'arrive normalement pas ici.
+      add(-10, "Projet à plus de 12 mois", "negative");
+      break;
+  }
+
+  // ── Avancement du parcours ────────────────────────────────────────────────
+  switch (answers.journeyStage) {
+    case "investisseur":
+      add(9, "Projet d'investissement — acheteur qui connaît le marché", "positive");
+      break;
+    case "vendre_pour_acheter":
+      add(8, "Vente-achat à coordonner — projet concret et motivé", "positive");
+      break;
+    case "separation":
+      add(6, "Achat en contexte de séparation — besoin souvent concret et rapide", "positive");
+      break;
+    case "premiere_maison":
+      add(5, "Premier achat — admissible aux programmes premier acheteur", "neutral");
+      break;
+  }
+
+  // ── Profil d'emploi ───────────────────────────────────────────────────────
+  switch (answers.employment) {
+    case "salarie_permanent":
+      add(10, "Emploi permanent — profil recherché par les prêteurs", "positive");
+      break;
+    case "retraite":
+      add(7, "Revenus de retraite stables", "positive");
+      break;
+    case "autonome":
+    case "entrepreneur":
+      add(3, "Travailleur autonome — le revenu net des 2 dernières années sera utilisé", "neutral");
+      break;
+    case "salarie_contrat":
+      add(2, "Emploi à contrat ou temps partiel — historique à documenter", "neutral");
+      break;
+    case "transition":
+      add(-12, "Situation d'emploi en transition — un prêteur voudra de la stabilité", "negative");
+      break;
+  }
+
+  if (answers.buyingWith === "co_acheteur") {
+    add(2, "Achat à deux — deux revenus, plus de flexibilité", "positive");
+  } else if (answers.buyingWith === "co_acheteurs") {
+    add(2, "Achat à plusieurs — les revenus se combinent (tous devront être au prêt)", "positive");
+  }
+
+  // ── Mise de fonds vs capacité ─────────────────────────────────────────────
+  const requis = capacity.requiredDownForCapacity;
+  const manque = capacity.downPaymentGap;
+  if (capacity.downPaymentSource === "vente") {
+    // La mise de fonds viendra de la vente : aucun écart à calculer, mais
+    // l'équité accumulée est un signal fort.
+    add(4, "Mise de fonds attendue de la vente de ta propriété actuelle", "positive");
+  } else if (capacity.maxByIncome > 0 && requis > 0) {
+    const ratioManque = manque / requis;
+    if (manque <= 0) {
+      add(15, "Mise de fonds suffisante pour ta pleine capacité", "positive");
+    } else if (ratioManque <= 0.25) {
+      add(4, "Mise de fonds presque au niveau de ta capacité", "positive");
+    } else if (ratioManque <= 0.6) {
+      add(-10, "Mise de fonds à compléter pour débloquer ta capacité", "negative");
+    } else {
+      add(-20, "Mise de fonds encore éloignée de ta capacité", "negative");
+    }
+  }
+
+  // ── Capacité soutenue par le revenu ───────────────────────────────────────
+  if (capacity.maxByIncome >= 400_000) {
+    add(8, "Le revenu du ménage soutient un budget confortable pour ton secteur", "positive");
+  } else if (capacity.maxByIncome >= 250_000) {
+    add(3, "Le revenu du ménage soutient un budget réaliste pour ton secteur", "neutral");
+  } else if (capacity.maxByIncome > 0) {
+    add(-8, "Le revenu retenu limite le budget accessible", "negative");
+  } else {
+    add(-15, "Revenu insuffisant pour supporter une hypothèque actuellement", "negative");
+  }
+
+  score = clamp(Math.round(score), 15, 98);
+
+  return { score, verdict: verdictFor(score, capacity, answers), factors, capacity };
+}
+
+function verdictFor(
+  score: number,
+  capacity: ScoringResult["capacity"],
+  answers: Answers
+): Verdict {
+  // Projet à bâtir : le revenu ne supporte pas encore un achat crédible.
+  if (capacity.maxByIncome < 150_000 || score < 35) return "a_batir";
+
+  // Mise de fonds : la capacité existe, mais le comptant la bride. Sans objet
+  // quand la mise de fonds viendra de la vente de la propriété actuelle.
+  const requis = capacity.requiredDownForCapacity;
+  if (
+    capacity.downPaymentSource !== "vente" &&
+    requis > 0 &&
+    capacity.downPaymentGap > requis * 0.05
+  ) {
+    return "mise_de_fonds";
+  }
+
+  // Financement : tout est là sauf la validation d'un prêteur.
+  if (
+    answers.financingStatus === "in_process" ||
+    answers.financingStatus === "not_started"
+  ) {
+    return "financement";
+  }
+
+  return "pret";
 }

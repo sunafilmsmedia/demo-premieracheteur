@@ -1,71 +1,160 @@
-// Modèle de données partagé client + serveur.
+// ============================================================================
+// Types — Logiciel Acheteur IA (démo premier acheteur)
+// ----------------------------------------------------------------------------
+// Version ACHETEUR du kit. Contrairement à l'app vendeur, l'analyse produit
+// une estimation de CAPACITÉ D'ACHAT (ce que la situation pourrait supporter)
+// et un plan de mise de fonds. Ce n'est jamais une préapprobation : les
+// chiffres sont indicatifs et doivent être validés par un prêteur.
+// ============================================================================
 
-export type BuyingWith = "alone" | "cobuyer";
+export type FinancingStatus =
+  | "preapproved" // déjà préapprouvé par un prêteur
+  | "prequalified" // préqualifié (estimation d'un courtier hypothécaire)
+  | "in_process" // démarches en cours
+  | "not_started"; // rien de commencé
 
-export type PropertyType = "house" | "condo" | "townhouse" | "plex" | "open";
+export type PropertyType = "maison" | "condo" | "plex" | "chalet" | "ouvert";
 
 export type PurchaseTimeline =
-  | "asap"
-  | "0_3_months"
-  | "3_6_months"
-  | "6_12_months"
-  | "exploring";
+  | "asap" // dès que je trouve la bonne propriété
+  | "0_3_mois"
+  | "3_6_mois"
+  | "6_12_mois"
+  | "plus_12_mois"; // → court-circuit vers la vidéo long terme
 
-export type CurrentHousing = "renter" | "owner" | "with_family" | "other";
+export type JourneyStage =
+  | "premiere_maison" // ce sera ma première maison
+  | "investisseur" // j'achète comme investissement
+  | "vendre_pour_acheter" // je dois vendre pour acheter
+  | "separation"; // achat dans un contexte de séparation
 
-export type OwnerStrategy = "must_sell" | "no_sale_needed";
+export type BuyingWith = "seul" | "co_acheteur" | "co_acheteurs";
 
-export type SalePreparation =
-  | "not_started"
-  | "valuation_done"
-  | "preparing"
-  | "already_listed"
-  | "accepted_offer";
+export type EmploymentStatus =
+  | "salarie_permanent"
+  | "salarie_contrat" // temps partiel, contractuel, saisonnier
+  | "autonome"
+  | "entrepreneur"
+  | "retraite"
+  | "transition"; // entre deux emplois, retour aux études, etc.
 
-export type FirstTimeBuyer = "yes" | "owned_before";
+export type Region = {
+  id: string;
+  name: string;
+  lat?: number;
+  lng?: number;
+};
 
 export interface Answers {
-  downPayment?: number;
-  buyingWith?: BuyingWith;
-  region?: string;
+  financingStatus?: FinancingStatus;
   propertyType?: PropertyType;
-  bedrooms?: number;
-  mustHaves?: string[];
-  firstTimeBuyer?: FirstTimeBuyer;
+  // Jusqu'à 3 secteurs (ids de REGIONS ou texte libre saisi par la personne).
+  regions?: string[];
   purchaseTimeline?: PurchaseTimeline;
-  currentHousing?: CurrentHousing;
-  ownerStrategy?: OwnerStrategy;
-  salePreparation?: SalePreparation;
+  journeyStage?: JourneyStage;
+  buyingWith?: BuyingWith;
+  householdIncome?: number;
+  downPayment?: number;
+  // Posé à la place de la mise de fonds quand la personne doit vendre avant
+  // d'acheter : sa mise de fonds sortira de cette vente.
+  currentHomeValue?: number;
+  employment?: EmploymentStatus;
 }
 
-export type FitLevel = "strong" | "possible" | "tight" | "unknown";
+// ── Capacité d'achat (calcul déterministe, lib/capacity.ts) ─────────────────
 
-export type LeadSegment = "priority" | "qualified" | "nurture" | "early_stage";
+export type LimitingFactor =
+  | "mise_de_fonds"
+  | "revenu"
+  | "equilibre"
+  | "vente_a_confirmer"; // la mise de fonds viendra de la vente en cours
+
+export interface CapacityResult {
+  // Revenu retenu après ajustement selon le profil d'emploi.
+  incomeConsidered: number;
+  // Estimation centrale : 4,5 × le revenu retenu. Jamais affichée telle quelle —
+  // c'est la fourchette ci-dessous qu'on montre au visiteur.
+  maxByIncome: number;
+  // Fourchette affichée (± 50 000 $ autour de l'estimation centrale).
+  capacityLow: number;
+  capacityHigh: number;
+  // D'où viendra la mise de fonds : épargne déclarée, ou vente en cours.
+  downPaymentSource: "epargne" | "vente";
+  // Valeur estimée de la propriété actuelle (0 si la personne n'a rien à vendre).
+  currentHomeValue: number;
+  // Plafond imposé par la mise de fonds ACTUELLE (règles minimales du Canada).
+  maxByDownPayment: number;
+  // Budget réaliste aujourd'hui = le plus petit des deux.
+  realisticBudget: number;
+  // Mise de fonds nécessaire pour débloquer maxByIncome.
+  requiredDownForCapacity: number;
+  // Ce qu'il manque pour y arriver (0 si la mise de fonds suffit déjà).
+  downPaymentGap: number;
+  // Paiement hypothécaire mensuel estimé sur le budget réaliste.
+  monthlyPayment: number;
+  limitedBy: LimitingFactor;
+  mortgageRate: number;
+  amortizationYears: number;
+  incomeMultiple: number;
+}
+
+// ── Scoring ─────────────────────────────────────────────────────────────────
+
+export type Verdict =
+  | "pret" // financement + mise de fonds au rendez-vous
+  | "financement" // mise de fonds correcte, financement à confirmer
+  | "mise_de_fonds" // capacité intéressante, mise de fonds insuffisante
+  | "a_batir"; // projet à construire (revenu et/ou mise de fonds)
+
+export interface ScoringFactor {
+  label: string;
+  delta: number;
+  tone: "positive" | "negative" | "neutral";
+}
 
 export interface ScoringResult {
-  score: number;
-  segment: LeadSegment;
-  projectFit: FitLevel;
-  secondaryTags: string[];
+  score: number; // 0-100
+  verdict: Verdict;
+  factors: ScoringFactor[];
+  capacity: CapacityResult;
 }
 
-export interface AnalysisReport {
+// ── Rapport (IA ou fallback déterministe) ───────────────────────────────────
+
+export interface ReportStat {
+  label: string;
+  value: string;
+  detail: string;
+}
+
+export interface ReportStep {
+  title: string;
+  description: string;
+}
+
+export interface Report {
   headline: string;
   summary: string;
-  projectProfile: string;
-  fitLevel: FitLevel;
-  strengths: string[];
-  considerations: string[];
-  recommendedAdjustments: string[];
-  nextSteps: string[];
-  disclaimer: string;
+  stats: ReportStat[];
+  steps: ReportStep[];
+  marketInsight: string;
 }
+
+export interface AnalyzeResponse {
+  scoring: ScoringResult;
+  report: Report;
+  generatedBy: "claude" | "fallback";
+}
+
+// ── Lead ────────────────────────────────────────────────────────────────────
+
+export type LeadType = "acheteur";
 
 export interface LeadPayload {
   name: string;
+  phone?: string;
   email: string;
-  phone: string;
   consent: boolean;
   answers: Answers;
-  leadType: string;
+  leadType?: LeadType;
 }

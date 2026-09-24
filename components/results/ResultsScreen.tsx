@@ -1,252 +1,501 @@
 "use client";
 
-import { useState } from "react";
 import { motion } from "framer-motion";
-import { AnalysisReport, Answers, FitLevel, ScoringResult } from "@/lib/types";
-import { broker } from "@/lib/broker";
+import { useState } from "react";
 import { formatCurrency } from "@/lib/format";
-import { PROPERTY_LABELS } from "@/lib/market";
-import { ContactForm } from "./ContactForm";
-import { PropertyIllustration } from "./PropertyIllustration";
+import { NUANCE_CAPACITE, VERDICT_HEADLINES, formatRange } from "@/lib/fallbackReport";
+import type { AnalyzeResponse, Answers, CapacityResult, Verdict } from "@/lib/types";
+import ContactForm from "./ContactForm";
+import ProgramsBlock from "./ProgramsBlock";
 
-const FIT_LABEL: Record<FitLevel, string> = {
-  strong: "Forte",
-  possible: "Possible",
-  tight: "Serrée",
-  unknown: "À valider",
-};
-
-const TIMELINE_LABEL: Record<string, string> = {
-  asap: "Dès la bonne propriété",
-  "0_3_months": "0 à 3 mois",
-  "3_6_months": "3 à 6 mois",
-  "6_12_months": "6 à 12 mois",
-  exploring: "En exploration",
-};
-
-function readinessLabel(a: Answers): string {
-  if (a.purchaseTimeline === "asap" || a.purchaseTimeline === "0_3_months")
-    return "Prêt à passer à l'action";
-  if (a.purchaseTimeline === "3_6_months") return "Projet bien avancé";
-  if (a.purchaseTimeline === "6_12_months") return "Préparation en cours";
-  return "Premières étapes";
-}
-
-// Met en évidence le mot-clé en doré dans le verdict.
-function Headline({ text }: { text: string }) {
-  const keywords = [
-    "réaliste",
-    "bien aligné",
-    "ambitieux",
-    "validation",
-    "préparation",
-  ];
-  const found = keywords.find((k) => text.toLowerCase().includes(k));
-  if (!found)
-    return <span className="font-display text-3xl text-brand-100">{text}</span>;
-  const [before, after] = text.split(new RegExp(found, "i"));
-  return (
-    <span className="font-display text-3xl leading-tight text-brand-100">
-      {before}
-      <span className="gold-gradient-text">{text.substr(before.length, found.length)}</span>
-      {after}
-    </span>
-  );
-}
-
-function List({ title, items }: { title: string; items: string[] }) {
-  if (!items?.length) return null;
-  return (
-    <div className="card p-5">
-      <h3 className="font-display text-lg text-brand-100">{title}</h3>
-      <ul className="mt-3 space-y-2.5">
-        {items.map((it, i) => (
-          <li key={i} className="flex gap-2.5 text-sm text-brand-200">
-            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />
-            <span>{it}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-export function ResultsScreen({
-  answers,
-  report,
-  scoring,
-  revealMode,
-  onRestart,
-}: {
+interface Props {
+  analyze: AnalyzeResponse;
   answers: Answers;
-  report: AnalysisReport;
-  scoring: ScoringResult;
-  revealMode: "full" | "summary";
+  // "yes" → la personne s'est engagée à recevoir l'analyse : le contenu est
+  // bloqué derrière le ContactForm. "no" → résultats affichés directement.
+  revealChoice: "yes" | "no";
   onRestart: () => void;
-}) {
-  const [submitted, setSubmitted] = useState(false);
-  const [unlockRequested, setUnlockRequested] = useState(false);
+}
 
-  const showFull = (revealMode === "full" || unlockRequested) && submitted;
+const VERDICT_BADGE: Record<Verdict, { label: string; color: string; bg: string; ring: string }> = {
+  pret: {
+    label: "Prêt à acheter",
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    ring: "ring-emerald-500/30",
+  },
+  financement: {
+    label: "Presque prêt",
+    color: "text-amber-400",
+    bg: "bg-amber-500/10",
+    ring: "ring-amber-500/30",
+  },
+  mise_de_fonds: {
+    label: "Presque prêt",
+    color: "text-amber-400",
+    bg: "bg-amber-500/10",
+    ring: "ring-amber-500/30",
+  },
+  a_batir: {
+    label: "Projet à bâtir",
+    color: "text-rose-400",
+    bg: "bg-rose-500/10",
+    ring: "ring-rose-500/30",
+  },
+};
 
-  // — Écran verrouillé : coordonnées avant révélation complète —
-  if ((revealMode === "full" || unlockRequested) && !submitted) {
+type SubmissionState =
+  | { kind: "pending" }
+  | { kind: "done"; stored: boolean; firstName: string };
+
+export default function ResultsScreen({ analyze, answers, revealChoice, onRestart }: Props) {
+  const { scoring, report } = analyze;
+  const capacity = scoring.capacity;
+  const badge = VERDICT_BADGE[scoring.verdict];
+  const [submission, setSubmission] = useState<SubmissionState>({ kind: "pending" });
+
+  const isGated = revealChoice === "yes" && submission.kind === "pending";
+  const showPrograms = capacity.downPaymentGap > 0 || scoring.verdict === "a_batir";
+
+  if (isGated) {
     return (
-      <section className="relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-24">
-        <div className="mx-auto w-full max-w-md text-center">
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-brand-600/40 bg-ink-soft text-2xl">
-            🔒
+      <div className="min-h-screen px-5 sm:px-8 py-12 sm:py-16 max-w-xl mx-auto w-full">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+          className="text-center"
+        >
+          <div className="relative mx-auto mb-7 w-16 h-16">
+            <div className="absolute inset-0 rounded-full bg-[var(--color-brand-500)]/20 blur-xl" />
+            <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-[var(--color-brand-500)] to-[var(--color-brand-700)] border border-white/10 flex items-center justify-center shadow-[0_10px_40px_-10px_rgba(58,109,255,0.5)]">
+              <svg className="w-7 h-7 text-white" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <rect x="4" y="9" width="12" height="9" rx="2" />
+                <path d="M7 9V6.5C7 4.8 8.3 3.5 10 3.5C11.7 3.5 13 4.8 13 6.5V9" />
+              </svg>
+            </div>
           </div>
-          <h2 className="font-display text-2xl text-brand-100">
-            Ton analyse est prête
-          </h2>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-brand-200">
-            Où veux-tu recevoir ton analyse personnalisée ?
+
+          <p className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-brand-300)] mb-3">
+            Analyse complète disponible
           </p>
-          <div className="mt-7 text-left">
-            <ContactForm answers={answers} onSubmitted={() => setSubmitted(true)} />
-          </div>
-        </div>
-      </section>
-    );
-  }
+          <h1 className="font-serif text-4xl sm:text-5xl text-[var(--color-brand-100)] leading-[1.1] tracking-tight text-balance">
+            Ton pouvoir d&apos;achat est calculé.
+          </h1>
+          <p className="mt-5 text-base sm:text-lg text-slate-400 leading-relaxed text-balance max-w-md mx-auto">
+            Laisse-nous ton contact pour débloquer ton portrait complet et recevoir
+            ton appel personnalisé avec ton courtier.
+          </p>
+        </motion.div>
 
-  // — Résumé non chiffré —
-  if (revealMode === "summary" && !showFull) {
-    return (
-      <section className="relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-24">
-        <div className="mx-auto w-full max-w-md text-center">
-          <h2 className="font-display text-2xl text-brand-100">
-            Aperçu de ton projet
-          </h2>
-          <div className="mt-6 grid grid-cols-2 gap-3">
-            <div className="card p-4">
-              <p className="text-xs text-brand-200">Niveau de préparation</p>
-              <p className="mt-1 font-display text-base text-brand-100">
-                {readinessLabel(answers)}
-              </p>
-            </div>
-            <div className="card p-4">
-              <p className="text-xs text-brand-200">Compatibilité estimée</p>
-              <p className="mt-1 font-display text-base text-brand-100">
-                {FIT_LABEL[report.fitLevel]}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => setUnlockRequested(true)}
-            className="mt-8 w-full rounded-full bg-gradient-to-r from-brand-400 to-brand-600 px-8 py-4 font-display text-base text-ink transition hover:brightness-110"
-          >
-            Débloquer l&apos;analyse complète
-          </button>
+        <div className="mt-10">
+          <ContactForm
+            answers={answers}
+            verdict={scoring.verdict}
+            gated
+            onSubmitted={(r) => setSubmission({ kind: "done", ...r })}
+          />
+        </div>
+
+        <div className="mt-10 text-center">
           <button
             onClick={onRestart}
-            className="mt-4 text-sm text-brand-200 underline underline-offset-4 hover:text-brand-100"
+            className="text-xs text-slate-500 hover:text-[var(--color-brand-200)] transition-colors"
           >
-            Refaire l&apos;analyse
+            Retour à l&apos;accueil
           </button>
         </div>
-      </section>
+      </div>
     );
   }
 
-  // — Analyse complète —
   return (
-    <section className="relative min-h-[100dvh] px-5 py-20 sm:py-24">
+    <div className="min-h-screen px-5 sm:px-8 py-10 sm:py-14 max-w-3xl mx-auto w-full">
+      {/* Verdict badge */}
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mx-auto w-full max-w-lg space-y-5"
+        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        className="flex justify-center mb-8"
       >
-        <div className="card p-6 text-center">
-          <PropertyIllustration type={answers.propertyType} />
-          <div className="mt-4">
-            <Headline text={report.headline} />
-          </div>
-          <p className="mt-4 text-sm leading-relaxed text-brand-200">
-            {report.summary}
-          </p>
+        <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full ${badge.bg} ring-1 ${badge.ring}`}>
+          <span className={`w-2 h-2 rounded-full ${badge.color.replace("text-", "bg-")}`} />
+          <span className={`text-xs font-medium tracking-wide ${badge.color}`}>{badge.label}</span>
         </div>
+      </motion.div>
 
-        <div className="card p-5">
-          <h3 className="font-display text-lg text-brand-100">
-            Ton projet d&apos;achat en un coup d&apos;œil
-          </h3>
-          <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-            <Item label="Secteur" value={answers.region ?? "—"} />
-            <Item
-              label="Type"
-              value={answers.propertyType ? PROPERTY_LABELS[answers.propertyType] : "—"}
-            />
-            <Item label="Chambres" value={answers.bedrooms ? String(answers.bedrooms) : "—"} />
-            <Item label="Échéancier" value={TIMELINE_LABEL[answers.purchaseTimeline ?? "exploring"]} />
-            <Item label="Mise de fonds" value={formatCurrency(answers.downPayment)} />
-          </dl>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div className="card p-4">
-            <p className="text-xs text-brand-200">Niveau de préparation</p>
-            <p className="mt-1 font-display text-[15px] text-brand-100">
-              {readinessLabel(answers)}
-            </p>
-          </div>
-          <div className="card p-4">
-            <p className="text-xs text-brand-200">Compatibilité estimée</p>
-            <p className="mt-1 font-display text-[15px] text-brand-100">
-              {FIT_LABEL[report.fitLevel]}
-            </p>
-          </div>
-        </div>
-
-        <List title="Points forts de ton projet" items={report.strengths} />
-        <List title="Éléments à valider" items={report.considerations} />
-        <List title="Ajustements possibles" items={report.recommendedAdjustments} />
-
-        <div className="card p-5">
-          <h3 className="font-display text-lg text-brand-100">
-            Ton plan d&apos;action
-          </h3>
-          <ol className="mt-3 space-y-3">
-            {report.nextSteps.map((step, i) => (
-              <li key={i} className="flex gap-3 text-sm text-brand-200">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-500/15 font-display text-xs text-brand-500">
-                  {i + 1}
-                </span>
-                <span className="pt-0.5">{step}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        <a
-          href="#"
-          onClick={(e) => e.preventDefault()}
-          className="block w-full rounded-full bg-gradient-to-r from-brand-400 to-brand-600 px-8 py-4 text-center font-display text-base text-ink transition hover:brightness-110"
-        >
-          Valider mon projet avec {broker.name}
-        </a>
-
-        <p className="px-1 text-[11px] leading-relaxed text-brand-200/70">
-          {report.disclaimer}
+      {/* Verdict + résumé */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.7, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+        className="text-center mb-12"
+      >
+        <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl text-[var(--color-brand-100)] leading-[1.05] tracking-tight text-balance">
+          {VERDICT_HEADLINES[scoring.verdict]}
+        </h1>
+        <p className="mt-5 text-base sm:text-lg text-slate-400 leading-relaxed text-balance max-w-2xl mx-auto">
+          {report.summary}
         </p>
+      </motion.div>
 
+      {/* Capacité d'achat — la pièce maîtresse */}
+      <CapacityCard capacity={capacity} downPayment={answers.downPayment ?? 0} />
+
+      {/* Score */}
+      <div className="mt-6">
+        <ScoreCard score={scoring.score} verdict={scoring.verdict} />
+      </div>
+
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.6, delay: 0.7 }}
+        className="text-center text-[11px] sm:text-xs text-slate-500 italic mt-3"
+      >
+        Estimation indicative — un courtier t&apos;appellera pour la valider avec toi.
+      </motion.p>
+
+      {/* Capture (ou confirmation) */}
+      {submission.kind === "pending" ? (
+        <ContactForm
+          answers={answers}
+          verdict={scoring.verdict}
+          onSubmitted={(r) => setSubmission({ kind: "done", ...r })}
+        />
+      ) : (
+        <ConfirmationBlock stored={submission.stored} firstName={submission.firstName} />
+      )}
+
+      {/* Stats secondaires */}
+      <div className="grid sm:grid-cols-3 gap-3 mt-12">
+        {report.stats.slice(1, 4).map((s, i) => (
+          <motion.div
+            key={s.label}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.4 + i * 0.07 }}
+            className="glass-card rounded-2xl p-5"
+          >
+            <p className="text-[11px] uppercase tracking-wider text-slate-500">{s.label}</p>
+            <p className="font-serif text-2xl text-[var(--color-brand-100)] mt-1">{s.value}</p>
+            <p className="text-xs text-slate-400 mt-2 leading-relaxed">{s.detail}</p>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Programmes — seulement quand la mise de fonds est le frein */}
+      {showPrograms && <ProgramsBlock gap={capacity.downPaymentGap} />}
+
+      {/* Donnée de marché */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.55 }}
+        className="
+          mt-12
+          rounded-2xl
+          bg-gradient-to-br from-[var(--color-brand-500)]/10 to-[var(--color-brand-700)]/10
+          border border-[var(--color-brand-400)]/20
+          p-5 sm:p-6
+        "
+      >
+        <div className="flex items-start gap-3">
+          <div className="shrink-0 w-9 h-9 rounded-full bg-[var(--color-brand-500)]/20 flex items-center justify-center">
+            <svg className="w-4 h-4 text-[var(--color-brand-300)]" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M3 17V9L10 3L17 9V17H12V12H8V17Z" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wider text-[var(--color-brand-300)] mb-1.5">
+              Donnée du marché
+            </p>
+            <p className="text-sm sm:text-base text-[var(--color-brand-100)] leading-relaxed">
+              {report.marketInsight}
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Facteurs détectés */}
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.65 }}
+        className="mt-10"
+      >
+        <h3 className="text-xs uppercase tracking-[0.18em] text-slate-500 mb-4">
+          Facteurs détectés
+        </h3>
+        <ul className="space-y-2">
+          {scoring.factors.map((f, i) => (
+            <li key={i} className="flex items-center gap-3 text-sm">
+              <span
+                className={`shrink-0 w-2 h-2 rounded-full ${
+                  f.tone === "positive"
+                    ? "bg-emerald-400"
+                    : f.tone === "negative"
+                    ? "bg-rose-400"
+                    : "bg-slate-500"
+                }`}
+              />
+              <span className="text-[var(--color-slate-300)]">{f.label}</span>
+            </li>
+          ))}
+        </ul>
+      </motion.section>
+
+      {/* Prochaines étapes */}
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.75 }}
+        className="mt-12"
+      >
+        <h3 className="text-xs uppercase tracking-[0.18em] text-slate-500 mb-5">
+          Prochaines étapes
+        </h3>
+        <ol className="space-y-3">
+          {report.steps.map((s, i) => (
+            <li key={i} className="glass-card rounded-2xl p-4 sm:p-5 flex gap-4">
+              <span className="
+                shrink-0 w-8 h-8 rounded-full
+                bg-gradient-to-br from-[var(--color-brand-500)] to-[var(--color-brand-700)]
+                flex items-center justify-center
+                font-serif text-white text-sm
+                shadow-[0_6px_18px_-4px_rgba(58,109,255,0.5)]
+              ">
+                {i + 1}
+              </span>
+              <div>
+                <p className="font-medium text-[var(--color-brand-100)]">{s.title}</p>
+                <p className="text-sm text-slate-400 mt-1 leading-relaxed">{s.description}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </motion.section>
+
+      {/* Avis */}
+      <p className="mt-10 text-[11px] text-slate-500 leading-relaxed">
+        La fourchette vient de la règle utilisée en courtage : environ{" "}
+        {capacity.incomeMultiple.toString().replace(".", ",")} × le revenu brut annuel retenu.
+        Le paiement mensuel est estimé à un taux de{" "}
+        {capacity.mortgageRate.toString().replace(".", ",")} % sur {capacity.amortizationYears} ans.
+        Tes dettes personnelles (auto, marges, cartes) ne sont pas incluses : le montant
+        confirmé par un prêteur peut différer. Ce n&apos;est ni une préapprobation ni un
+        engagement de prêt.
+      </p>
+
+      {/* Footer */}
+      <div className="mt-10 mb-24 sm:mb-12 text-center">
         <button
           onClick={onRestart}
-          className="mx-auto block text-sm text-brand-200 underline underline-offset-4 hover:text-brand-100"
+          className="text-sm text-slate-400 hover:text-[var(--color-brand-200)] transition-colors underline underline-offset-4 decoration-white/25 hover:decoration-[var(--color-brand-400)]"
         >
           Refaire l&apos;analyse
         </button>
-      </motion.div>
-    </section>
+        <p className="mt-6 text-[10px] text-slate-600 uppercase tracking-[0.2em]">
+          Analyse {analyze.generatedBy === "claude" ? "IA" : "déterministe"}
+        </p>
+      </div>
+    </div>
   );
 }
 
-function Item({ label, value }: { label: string; value: string }) {
+// Carte principale : ce que la situation pourrait supporter, puis l'écart de
+// mise de fonds chiffré quand c'est le facteur limitant.
+function CapacityCard({
+  capacity,
+  downPayment,
+}: {
+  capacity: CapacityResult;
+  downPayment: number;
+}) {
+  const isVendeur = capacity.downPaymentSource === "vente";
+  const hasGap = !isVendeur && capacity.downPaymentGap > 0;
   return (
-    <div>
-      <dt className="text-xs text-brand-200">{label}</dt>
-      <dd className="mt-0.5 font-medium text-brand-100">{value}</dd>
-    </div>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      className="
+        relative overflow-hidden
+        rounded-3xl p-7 sm:p-9
+        bg-white/[0.09]
+        border border-[var(--color-slate-accent)]/12
+        shadow-[0_30px_80px_-30px_rgba(0, 0, 0, 0.50)]
+      "
+    >
+      <div className="absolute -top-24 -right-24 w-60 h-60 rounded-full bg-[var(--color-brand-400)]/10 blur-3xl" />
+
+      <div className="relative">
+        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+          Ce que ta situation pourrait supporter
+        </p>
+        <motion.p
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.4 }}
+          className="font-serif text-[2rem] sm:text-5xl text-[var(--color-brand-100)] leading-tight mt-3"
+        >
+          {formatRange(capacity.capacityLow, capacity.capacityHigh)}
+        </motion.p>
+        <p className="mt-3 text-sm text-slate-400 leading-relaxed">{NUANCE_CAPACITE}</p>
+
+        {isVendeur && (
+          <div className="mt-6 rounded-2xl bg-[var(--color-brand-500)]/[0.07] border border-[var(--color-brand-400)]/20 px-4 py-3.5">
+            <p className="text-sm text-[var(--color-brand-100)] leading-relaxed">
+              🏡 Ta mise de fonds viendra de la vente de ta propriété, que tu estimes à{" "}
+              <strong className="font-semibold">{formatCurrency(capacity.currentHomeValue)}</strong>.
+              On confirmera le montant net avec toi — c&apos;est lui qui fixera ton budget
+              réel.
+            </p>
+          </div>
+        )}
+
+        {hasGap && (
+          <div className="mt-6 space-y-3">
+            <div className="rounded-2xl bg-[var(--color-brand-500)]/[0.07] border border-[var(--color-brand-400)]/20 px-4 py-3.5">
+              <p className="text-sm text-[var(--color-brand-100)] leading-relaxed">
+                💡 Ta mise de fonds actuelle ({formatCurrency(downPayment)}) te limite à{" "}
+                <strong className="font-semibold">{formatCurrency(capacity.maxByDownPayment)}</strong>{" "}
+                aujourd&apos;hui.
+              </p>
+            </div>
+            <div className="rounded-2xl bg-[var(--color-gold)]/[0.09] border border-[var(--color-gold)]/30 px-4 py-3.5">
+              <p className="text-sm text-[var(--color-brand-100)] leading-relaxed">
+                🎯 Pour débloquer ton plein potentiel, vise une mise d&apos;environ{" "}
+                <strong className="font-semibold">
+                  {formatCurrency(capacity.requiredDownForCapacity)}
+                </strong>{" "}
+                — il te manque {formatCurrency(capacity.downPaymentGap)}.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!hasGap && !isVendeur && capacity.realisticBudget > 0 && (
+          <div className="mt-6 rounded-2xl bg-emerald-500/[0.08] border border-emerald-500/25 px-4 py-3.5">
+            <p className="text-sm text-[var(--color-brand-100)] leading-relaxed">
+              ✅ Ta mise de fonds de {formatCurrency(downPayment)} couvre déjà le minimum
+              exigé — rien ne bride ta capacité aujourd&apos;hui.
+            </p>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function ConfirmationBlock({ stored, firstName }: { stored: boolean; firstName: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6 }}
+      className={`
+        mt-12 rounded-3xl p-6 sm:p-8
+        ${stored
+          ? "bg-gradient-to-br from-emerald-400/20 to-emerald-200/10 border border-emerald-500/30"
+          : "bg-gradient-to-br from-[var(--color-gold)]/10 to-transparent border border-[var(--color-gold)]/30"}
+      `}
+    >
+      {stored ? (
+        <>
+          <div className="flex items-center gap-2 mb-2">
+            <svg className="w-5 h-5 text-emerald-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 7L10 3L17 7M3 7V15A2 2 0 0 0 5 17H15A2 2 0 0 0 17 15V7M3 7L10 11L17 7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <p className="font-serif text-xl sm:text-2xl text-[var(--color-brand-100)]">
+              Merci {firstName}, ton plan d&apos;achat arrive.
+            </p>
+          </div>
+          <p className="text-sm sm:text-base text-[var(--color-slate-300)] leading-relaxed">
+            Tu vas recevoir ton analyse complète par courriel dans les prochaines minutes,
+            et ton courtier te contactera pour valider tes chiffres avec toi.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center gap-2 mb-2">
+            <svg className="w-5 h-5 text-[var(--color-gold)]" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M10 2 L17 6 L17 11 C17 14.5 14 17.5 10 18 C6 17.5 3 14.5 3 11 L3 6 Z" strokeLinejoin="round" />
+              <path d="M7 10 L9.5 12.5 L14 8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <p className="font-serif text-xl sm:text-2xl text-[var(--color-gold-soft)]">
+              Tes coordonnées n&apos;ont pas été conservées.
+            </p>
+          </div>
+          <p className="text-sm sm:text-base text-[var(--color-gold-soft)]/85 leading-relaxed">
+            Ton analyse reste affichée ici. Reviens nous voir quand tu voudras en parler
+            à quelqu&apos;un.
+          </p>
+        </>
+      )}
+    </motion.div>
+  );
+}
+
+function ScoreCard({ score, verdict }: { score: number; verdict: Verdict }) {
+  const barClass =
+    verdict === "pret"
+      ? "bg-gradient-to-r from-emerald-300 to-emerald-400"
+      : verdict === "a_batir"
+      ? "bg-gradient-to-r from-rose-300 to-rose-400"
+      : "bg-gradient-to-r from-amber-300 to-amber-400";
+
+  const note =
+    verdict === "pret"
+      ? "Tout est aligné : financement, mise de fonds et échéancier."
+      : verdict === "financement"
+      ? "Il ne manque que la validation d'un prêteur."
+      : verdict === "mise_de_fonds"
+      ? "La capacité est là — c'est la mise de fonds qui bride le budget."
+      : "Le projet se construit : revenus, mise de fonds, puis achat.";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.7, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
+      className="
+        relative overflow-hidden
+        rounded-3xl p-7 sm:p-9
+        bg-gradient-to-br from-[#1b2a5e] via-[#24357f] to-[#131e44]
+        shadow-[0_30px_80px_-30px_rgba(0, 0, 0, 0.85),0_0_0_1px_rgba(255,255,255,0.06)_inset]
+      "
+    >
+      <div className="absolute -top-20 -right-20 w-60 h-60 rounded-full bg-[var(--color-brand-400)]/20 blur-3xl" />
+      <div className="absolute -bottom-20 -left-20 w-60 h-60 rounded-full bg-[var(--color-gold)]/10 blur-3xl" />
+
+      <div className="relative">
+        <p className="text-[11px] uppercase tracking-[0.2em] text-white/65">
+          Score de préparation
+        </p>
+        <div className="flex items-baseline gap-2 mt-3">
+          <motion.span
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.45 }}
+            className="font-serif text-7xl sm:text-8xl text-white leading-none"
+          >
+            {score}
+          </motion.span>
+          <span className="font-serif text-2xl text-white/55">/100</span>
+        </div>
+
+        <div className="mt-6 h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${score}%` }}
+            transition={{ duration: 1.2, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            className={`h-full rounded-full ${barClass}`}
+          />
+        </div>
+
+        <p className="mt-4 text-sm text-white/70">{note}</p>
+      </div>
+    </motion.div>
   );
 }

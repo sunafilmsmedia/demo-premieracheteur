@@ -1,56 +1,55 @@
 "use client";
 
-import { useState } from "react";
-import { formatCurrency, parseCurrency } from "@/lib/format";
+import { useState, useEffect } from "react";
+import { groupedNumber, parseCurrency } from "@/lib/format";
 
-const MIN = 25000;
-const MAX = 10000000;
+interface Props {
+  value?: number;
+  onChange: (v: number | undefined) => void;
+  placeholder?: string;
+  helper?: string;
+}
 
-export function CurrencyQuestion({
-  initial,
-  optional,
-  onContinue,
-  onSkip,
-}: {
-  initial?: number;
-  optional?: boolean;
-  onContinue: (value: number) => void;
-  onSkip?: () => void;
-}) {
-  const [raw, setRaw] = useState<number | null>(initial ?? null);
-  const display = raw != null ? formatCurrency(raw) : "";
-  const valid = raw != null && raw >= MIN && raw <= MAX;
+export default function CurrencyQuestion({
+  value,
+  onChange,
+  placeholder = "350 000",
+  helper,
+}: Props) {
+  const [display, setDisplay] = useState<string>(value ? groupedNumber(value) : "");
+
+  useEffect(() => {
+    if (typeof value === "number" && parseCurrency(display) !== value) {
+      setDisplay(groupedNumber(value));
+    }
+    if (value === undefined && display === "") return;
+  }, [value, display]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <input
-        inputMode="numeric"
-        autoFocus
-        value={display}
-        onChange={(e) => setRaw(parseCurrency(e.target.value))}
-        placeholder="Ex. 25 000 $"
-        className="w-full rounded-xl border border-ink-line bg-ink-soft px-5 py-4 text-center font-display text-2xl text-brand-100 outline-none transition focus:border-brand-500"
-      />
-      {raw != null && !valid && (
-        <p className="text-center text-xs text-brand-500">
-          Entre un montant entre {formatCurrency(MIN)} et {formatCurrency(MAX)}.
-        </p>
-      )}
-      <button
-        disabled={!valid}
-        onClick={() => valid && onContinue(raw!)}
-        className="w-full rounded-full bg-gradient-to-r from-brand-400 to-brand-600 px-8 py-4 font-display text-base text-ink transition enabled:hover:brightness-110 enabled:active:scale-[0.98] disabled:opacity-40"
-      >
-        Continuer
-      </button>
-      {optional && onSkip && (
-        <button
-          onClick={onSkip}
-          className="text-sm text-brand-200 underline underline-offset-4 hover:text-brand-100"
-        >
-          Je préfère ne pas répondre
-        </button>
-      )}
+    <div className="glass-card rounded-2xl p-6 sm:p-8">
+      <div className="flex items-baseline gap-3">
+        <span className="font-serif text-3xl sm:text-4xl text-[var(--color-gold)]">$</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          value={display}
+          onChange={(e) => {
+            const raw = e.target.value;
+            const parsed = parseCurrency(raw);
+            setDisplay(parsed !== undefined ? groupedNumber(parsed) : raw.replace(/[^\d\s]/g, ""));
+            onChange(parsed);
+          }}
+          placeholder={placeholder}
+          className="
+            flex-1 font-serif text-4xl sm:text-5xl text-[var(--color-brand-100)] bg-transparent
+            placeholder:text-slate-400/50 focus:outline-none w-full
+            tracking-wide
+          "
+        />
+        <span className="text-sm text-slate-400">CAD</span>
+      </div>
+      {helper && <p className="text-xs text-slate-500 mt-3">{helper}</p>}
     </div>
   );
 }

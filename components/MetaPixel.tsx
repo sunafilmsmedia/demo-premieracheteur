@@ -1,6 +1,39 @@
 import Script from "next/script";
 import { config } from "@/lib/config";
 
+declare global {
+  interface Window {
+    fbq?: (...args: unknown[]) => void;
+  }
+}
+
+interface AdvancedMatchingInfo {
+  email?: string;
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+// Déclenche l'événement standard "Lead" avec Advanced Matching activé.
+// No-op sûr si aucun pixel n'est configuré.
+export function trackLeadWithMatching(
+  user: AdvancedMatchingInfo,
+  eventParams?: Record<string, unknown>
+) {
+  if (typeof window === "undefined" || !window.fbq) return;
+  const id = config.META_PIXEL_ID;
+  if (!id) return;
+
+  const userData: Record<string, string> = {};
+  if (user.email) userData.em = user.email.trim().toLowerCase();
+  if (user.phone) userData.ph = user.phone.replace(/\D/g, "");
+  if (user.firstName) userData.fn = user.firstName.trim().toLowerCase();
+  if (user.lastName) userData.ln = user.lastName.trim().toLowerCase();
+
+  window.fbq("init", id, userData);
+  window.fbq("track", "Lead", eventParams);
+}
+
 export function MetaPixel() {
   const id = config.META_PIXEL_ID;
   if (!id) return null;

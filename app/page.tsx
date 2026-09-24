@@ -1,91 +1,151 @@
 "use client";
 
+import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
-import { Answers, AnalysisReport, ScoringResult } from "@/lib/types";
-import { TopLogos } from "@/components/TopLogos";
 import { Hero } from "@/components/Hero";
-import { QualificationForm } from "@/components/QualificationForm";
-import { LoadingScreen } from "@/components/LoadingScreen";
-import { PreRevealScreen } from "@/components/PreRevealScreen";
-import { ResultsScreen } from "@/components/results/ResultsScreen";
+import { HeroBackground } from "@/components/HeroBackground";
+import { TopLogos } from "@/components/TopLogos";
+import QualificationForm from "@/components/QualificationForm";
+import LoadingScreen from "@/components/LoadingScreen";
+import PreRevealScreen from "@/components/PreRevealScreen";
+import LongTermScreen from "@/components/LongTermScreen";
+import ResultsScreen from "@/components/results/ResultsScreen";
+import { trackStep } from "@/lib/track";
+import type { AnalyzeResponse, Answers } from "@/lib/types";
 
-type Stage = "hero" | "form" | "loading" | "preReveal" | "results";
+type Stage = "hero" | "form" | "loading" | "preReveal" | "results" | "longTerm";
 
-const LOGO_STAGES: Stage[] = ["hero", "preReveal", "results"];
+const MIN_LOADING_MS = 2000;
+const LOGO_STAGES: Stage[] = ["hero", "preReveal", "results", "longTerm"];
 
-export default function Page() {
+export default function Home() {
   const [stage, setStage] = useState<Stage>("hero");
-  const [answers, setAnswers] = useState<Answers>({});
-  const [report, setReport] = useState<AnalysisReport | null>(null);
-  const [scoring, setScoring] = useState<ScoringResult | null>(null);
-  const [revealMode, setRevealMode] = useState<"full" | "summary">("full");
+  const [answers, setAnswers] = useState<Answers | null>(null);
+  const [analyze, setAnalyze] = useState<AnalyzeResponse | null>(null);
+  const [revealChoice, setRevealChoice] = useState<"yes" | "no">("no");
 
-  async function handleComplete(finalAnswers: Answers) {
+  const handleFormComplete = async (finalAnswers: Answers) => {
+    trackStep("analyse");
     setAnswers(finalAnswers);
     setStage("loading");
-    const start = Date.now();
+    if (typeof window !== "undefined") window.scrollTo(0, 0);
 
+    const startedAt = performance.now();
+    let result: AnalyzeResponse | null = null;
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answers: finalAnswers }),
       });
-      const data = await res.json();
-      setReport(data.report);
-      setScoring(data.scoring);
+      if (res.ok) result = (await res.json()) as AnalyzeResponse;
     } catch {
-      // Le serveur renvoie toujours un rapport ; en cas d'échec réseau,
-      // on renvoie l'utilisateur au questionnaire.
-      setStage("hero");
-      return;
+      // result reste null
     }
 
-    const elapsed = Date.now() - start;
-    const wait = Math.max(0, 2000 - elapsed);
-    setTimeout(() => setStage("preReveal"), wait);
-  }
+    const elapsed = performance.now() - startedAt;
+    const remaining = Math.max(0, MIN_LOADING_MS - elapsed);
+    setTimeout(() => {
+      if (result) {
+        setAnalyze(result);
+        trackStep("pre_reveal");
+        setStage("preReveal");
+        if (typeof window !== "undefined") window.scrollTo(0, 0);
+      } else {
+        setStage("form");
+      }
+    }, remaining);
+  };
 
-  function reset() {
-    setAnswers({});
-    setReport(null);
-    setScoring(null);
+  const revealResults = (choice: "yes" | "no") => {
+    trackStep("resultats", choice === "yes" ? "avec_contact" : "sans_contact");
+    setRevealChoice(choice);
+    setStage("results");
+    if (typeof window !== "undefined") window.scrollTo(0, 0);
+  };
+
+  // Achat à plus de 12 mois : on remet la vidéo de préparation, sans analyse
+  // ni capture de lead.
+  const handleLongTerm = (partialAnswers: Answers) => {
+    trackStep("long_terme");
+    setAnswers(partialAnswers);
+    setStage("longTerm");
+    if (typeof window !== "undefined") window.scrollTo(0, 0);
+  };
+
+  const restart = () => {
+    setAnswers(null);
+    setAnalyze(null);
+    setRevealChoice("no");
     setStage("hero");
-  }
+    if (typeof window !== "undefined") window.scrollTo(0, 0);
+  };
 
   return (
-    <main className="relative min-h-[100dvh]">
-      {LOGO_STAGES.includes(stage) && <TopLogos />}
+    <main className="relative min-h-screen overflow-hidden">
+      <AnimatePresence>
+        {stage === "hero" && (
+          <motion.div
+            key="bg"
+            initial={false}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6 }}
+            className="absolute inset-0 z-0"
+          >
+            <HeroBackground />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {stage === "hero" && <Hero onStart={() => setStage("form")} />}
+      <AnimatePresence mode="wait">
+        {stage === "hero" && (
+          <motion.div key="hero" className="relative z-10" initial={false} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.5 }}>
+            <Hero onStart={() => { trackStep("debut"); setStage("form"); }} />
+          </motion.div>
+        )}
+        {stage === "form" && (
+          <motion.div key="form" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.5 }}>
+            <QualificationForm
+              onComplete={handleFormComplete}
+              onLongTerm={handleLongTerm}
+              onExit={() => setStage("hero")}
+            />
+          </motion.div>
+        )}
+        {stage === "loading" && (
+          <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.4 }}>
+            <LoadingScreen />
+          </motion.div>
+        )}
+        {stage === "preReveal" && analyze && (
+          <motion.div key="preReveal" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.4 }}>
+            <PreRevealScreen onContinue={revealResults} />
+          </motion.div>
+        )}
+        {stage === "results" && analyze && answers && (
+          <motion.div key="results" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
+            <ResultsScreen
+              analyze={analyze}
+              answers={answers}
+              revealChoice={revealChoice}
+              onRestart={restart}
+            />
+          </motion.div>
+        )}
+        {stage === "longTerm" && (
+          <motion.div key="longTerm" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
+            <LongTermScreen onRestart={restart} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {stage === "form" && (
-        <QualificationForm
-          onComplete={handleComplete}
-          onExit={() => setStage("hero")}
-        />
-      )}
-
-      {stage === "loading" && <LoadingScreen />}
-
-      {stage === "preReveal" && (
-        <PreRevealScreen
-          onReveal={(mode) => {
-            setRevealMode(mode);
-            setStage("results");
-          }}
-        />
-      )}
-
-      {stage === "results" && report && scoring && (
-        <ResultsScreen
-          answers={answers}
-          report={report}
-          scoring={scoring}
-          revealMode={revealMode}
-          onRestart={reset}
-        />
-      )}
+      <AnimatePresence>
+        {LOGO_STAGES.includes(stage) && (
+          <motion.div key="chrome" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.4 }}>
+            <TopLogos />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

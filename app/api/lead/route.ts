@@ -1,103 +1,146 @@
 import { NextResponse } from "next/server";
-import { Answers } from "@/lib/types";
-import { config, LEAD_TYPE } from "@/lib/config";
-import { scoreAnswers } from "@/lib/scoring";
-import { evaluateQualification } from "@/lib/qualification";
-import { broker } from "@/lib/broker";
+import { computeScoring } from "@/lib/scoring";
+import { regionNames } from "@/lib/fallbackReport";
+import type { Answers, LeadPayload, LeadType } from "@/lib/types";
 
 export const runtime = "nodejs";
 
-interface LeadBody {
-  name?: string;
-  email?: string;
-  phone?: string;
-  consent?: boolean;
+interface IncomingBody extends Partial<LeadPayload> {
   answers?: Answers;
-  leadType?: string;
+  leadType?: LeadType;
+}
+
+function splitName(full: string): { firstName: string; lastName: string } {
+  const parts = full.trim().split(/\s+/);
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+
+// Segmentation jour/nuit selon l'heure du Québec (America/Montreal).
+// Le fuseau IANA gère l'heure avancée automatiquement.
+//   Jour : 8 h → 20 h   Nuit : 20 h → 8 h
+function quebecSegment(): {
+  periode: "jour" | "nuit";
+  lead_type: "lead_jour" | "lead_nuit";
+  heureQuebec: number;
+} {
+  const hourStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Montreal",
+    hour: "2-digit",
+    hour12: false,
+    hourCycle: "h23",
+  }).format(new Date());
+  const heureQuebec = parseInt(hourStr, 10);
+  const jour = heureQuebec >= 8 && heureQuebec < 20;
+  return {
+    periode: jour ? "jour" : "nuit",
+    lead_type: jour ? "lead_jour" : "lead_nuit",
+    heureQuebec,
+  };
 }
 
 export async function POST(req: Request) {
-  let body: LeadBody;
+  let body: IncomingBody;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { name, email, phone, consent, answers } = body;
+  const { name, phone, email, consent, answers } = body;
+  const leadType: LeadType = body.leadType ?? "acheteur";
 
-  if (
-    !name?.trim() ||
-    !email?.includes("@") ||
-    !phone?.trim() ||
-    !consent ||
-    !answers
-  ) {
-    return NextResponse.json({ error: "missing_fields" }, { status: 422 });
+  if (!name || !email || !consent || !answers) {
+    return NextResponse.json(
+      { stored: false, error: "Missing required fields" },
+      { status: 400 }
+    );
   }
 
-  const scoring = scoreAnswers(answers);
-  const qualification = evaluateQualification(answers, scoring);
+  const scoring = computeScoring(answers);
+  const c = scoring.capacity;
+  const { firstName, lastName } = splitName(name);
+  const secteurs = regionNames(answers);
+  const segment = quebecSegment();
 
-  if (!qualification.store) {
-    return NextResponse.json({ ok: true, stored: false, reason: qualification.reason });
-  }
-
-  if (!config.WEBHOOK_URL) {
-    // Pas de webhook configuré : on confirme sans transmettre.
-    return NextResponse.json({ ok: true, stored: false, reason: "no_webhook" });
-  }
-
-  const [firstName, ...rest] = name.trim().split(/\s+/);
-  const lastName = rest.join(" ");
-  const receivedAt = new Date().toISOString();
-
+  // Payload aplati pour mapping GHL direct + données brutes en complément.
   const payload = {
-    source: broker.name,
-    leadType: body.leadType ?? LEAD_TYPE,
+    source: "demo-premieracheteur",
+    receivedAt: new Date().toISOString(),
+
+    leadType, // "acheteur"
+
+    // Segmentation horaire (heure du Québec, DST géré)
+    periode: segment.periode,
+    lead_type: segment.lead_type,
+    heureQuebec: segment.heureQuebec,
+
+    // Contact
     firstName,
     lastName,
-    fullName: name.trim(),
+    fullName: name,
+    phone: phone ?? "",
     email,
-    phone,
-    leadScore: scoring.score,
-    leadSegment: scoring.segment,
-    projectFit: scoring.projectFit,
-    secondaryTags: scoring.secondaryTags,
-    downPayment: answers.downPayment,
-    region: answers.region,
-    propertyType: answers.propertyType,
-    bedrooms: answers.bedrooms,
-    mustHaves: answers.mustHaves,
-    firstTimeBuyer: answers.firstTimeBuyer,
-    purchaseTimeline: answers.purchaseTimeline,
-    currentHousing: answers.currentHousing,
-    ownerStrategy: answers.ownerStrategy,
-    salePreparation: answers.salePreparation,
-    buyingWith: answers.buyingWith,
-    consent,
-    receivedAt,
-    // objets imbriqués
-    lead: { name: name.trim(), email, phone, consent },
-    scoring,
-    qualification,
+
+    // Scoring
+    score: scoring.score,
+    verdict: scoring.verdict, // pret | financement | mise_de_fonds | a_batir
+
+    // Capacité d'achat (montants indicatifs, jamais une préapprobation)
+    // Estimation centrale = 4,5 × le revenu retenu ; c'est la FOURCHETTE
+    // (min/max) qui est montrée au visiteur.
+    capaciteEstimee: c.maxByIncome,
+    capaciteMin: c.capacityLow,
+    capaciteMax: c.capacityHigh,
+    sourceMiseDeFonds: c.downPaymentSource, // epargne | vente
+    valeurProprieteActuelle: c.currentHomeValue,
+    budgetRealiste: c.realisticBudget,
+    plafondMiseDeFonds: c.maxByDownPayment,
+    miseDeFondsVisee: c.requiredDownForCapacity,
+    manqueMiseDeFonds: c.downPaymentGap,
+    paiementMensuel: c.monthlyPayment,
+    facteurLimitant: c.limitedBy,
+
+    // Profil acheteur
+    financingStatus: answers.financingStatus ?? "",
+    propertyType: answers.propertyType ?? "",
+    secteurs: secteurs.join(", "),
+    secteursIds: answers.regions ?? [],
+    purchaseTimeline: answers.purchaseTimeline ?? "",
+    journeyStage: answers.journeyStage ?? "",
+    buyingWith: answers.buyingWith ?? "",
+    householdIncome: answers.householdIncome ?? 0,
+    downPayment: answers.downPayment ?? 0,
+    currentHomeValue: answers.currentHomeValue ?? 0,
+    employment: answers.employment ?? "",
+
+    // Données brutes
+    lead: { name, phone, email },
+    scoring: { score: scoring.score, verdict: scoring.verdict, capacity: c },
     answers,
   };
 
-  try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (config.WEBHOOK_SECRET) headers["X-Webhook-Secret"] = config.WEBHOOK_SECRET;
+  const webhookUrl = process.env.CRM_WEBHOOK_URL;
+  const webhookSecret = process.env.CRM_WEBHOOK_SECRET;
 
-    await fetch(config.WEBHOOK_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-  } catch {
-    return NextResponse.json({ ok: true, stored: false, reason: "webhook_error" });
+  if (webhookUrl) {
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (webhookSecret) headers["X-Webhook-Secret"] = webhookSecret;
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        console.error("[lead] Webhook returned", res.status);
+      }
+    } catch (err) {
+      console.error("[lead] Webhook failed", err);
+    }
+  } else {
+    console.log("[lead] Stored (no webhook configured):", JSON.stringify(payload));
   }
 
-  return NextResponse.json({ ok: true, stored: true });
+  return NextResponse.json({ stored: true, verdict: scoring.verdict, leadType });
 }

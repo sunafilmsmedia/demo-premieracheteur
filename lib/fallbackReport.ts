@@ -1,88 +1,253 @@
-import { AnalysisReport, Answers, ScoringResult } from "./types";
-import { broker } from "./broker";
-import { isNotReady, projectReadiness } from "./scoring";
+// Rapport déterministe — utilisé tel quel quand aucune clé Anthropic n'est
+// configurée, et comme filet de sécurité si l'appel à Claude échoue.
+// Toutes les phrases restent honnêtes : aucun montant n'est présenté comme
+// une approbation, et l'écart de mise de fonds est chiffré sans dramatiser.
 
-export const STANDARD_DISCLAIMER =
-  "Cette analyse est indicative et repose uniquement sur les informations fournies. Elle ne constitue pas une préapprobation hypothécaire, une évaluation immobilière, un avis financier ni une garantie qu'une propriété correspondant aux critères est disponible. Les possibilités doivent être validées avec les professionnels concernés.";
+import { formatCurrency } from "./format";
+import { REGIONS } from "./regions";
+import type { Answers, Report, ScoringResult, Verdict } from "./types";
 
-const TIMELINE_LABEL: Record<string, string> = {
-  asap: "dès que tu trouves la bonne propriété",
-  "0_3_months": "dans les 3 prochains mois",
-  "3_6_months": "dans 3 à 6 mois",
-  "6_12_months": "dans 6 à 12 mois",
-  exploring: "en mode exploration",
+const HEADLINES: Record<Verdict, string> = {
+  pret: "Tu es prêt à passer à l'action.",
+  financement: "Presque prêt — il te manque la préqualification.",
+  mise_de_fonds: "Presque prêt — il te manque la mise de fonds.",
+  a_batir: "Ton projet se bâtit — et c'est très correct.",
 };
 
-function headlineFor(a: Answers): string {
-  switch (projectReadiness(a)) {
-    case "ready":
-      return "Ton projet est réaliste";
-    case "advancing":
-      return "Ton projet est bien aligné";
-    default:
-      return "Ton projet est en préparation";
+const PROPERTY_LABEL: Record<string, string> = {
+  maison: "maison unifamiliale",
+  condo: "condo",
+  plex: "plex",
+  chalet: "chalet",
+  ouvert: "propriété",
+};
+
+// La capacité n'est jamais affichée comme un chiffre exact : le montant réel
+// dépend des dettes et des paiements mensuels, qu'on ne demande pas ici.
+export function formatRange(low: number, high: number): string {
+  return `entre ${formatCurrency(low)} et ${formatCurrency(high)}`;
+}
+
+export const NUANCE_CAPACITE =
+  "Ça peut varier selon tes dettes, tes paiements mensuels, etc. On va t'appeler pour confirmer ta situation — ou te référer à un courtier hypothécaire si tu n'en as pas.";
+
+export function regionNames(answers: Answers): string[] {
+  return (answers.regions ?? []).map(
+    (id) => REGIONS.find((r) => r.id === id)?.name ?? id
+  );
+}
+
+function summaryFor(verdict: Verdict, answers: Answers, scoring: ScoringResult): string {
+  const c = scoring.capacity;
+  const type = PROPERTY_LABEL[answers.propertyType ?? "ouvert"] ?? "propriété";
+  const fourchette = formatRange(c.capacityLow, c.capacityHigh);
+
+  // Vendeur-acheteur : la mise de fonds sortira de sa vente, il n'y a donc
+  // aucun écart à combler — le sujet, c'est la coordination des deux.
+  if (c.downPaymentSource === "vente") {
+    return `Ta situation te permet de viser ${fourchette} pour ta prochaine ${type}. Ta mise de fonds viendra de la vente de ta propriété actuelle (estimée à ${formatCurrency(
+      c.currentHomeValue
+    )}) : la vraie question, c'est la coordination des deux transactions.`;
+  }
+
+  switch (verdict) {
+    case "pret":
+      return `Ta situation te permet de viser une ${type} ${formatRange(
+        c.capacityLow,
+        c.capacityHigh
+      )} dans ton secteur. Financement, mise de fonds et échéancier sont alignés : la prochaine étape, c'est de regarder ce qui est réellement disponible dans tes secteurs.`;
+    case "financement":
+      return `Ta situation soutient un budget ${formatRange(
+        c.capacityLow,
+        c.capacityHigh
+      )}. Il te manque une seule pièce : la validation d'un prêteur. Une préqualification prend généralement moins de 48 heures et transforme ton budget en offre crédible.`;
+    case "mise_de_fonds":
+      return `Ta situation te permet de viser gros. La seule pièce qui manque, c'est la mise de fonds — et ça, ça se bâtit. Avec ${formatCurrency(
+        answers.downPayment ?? 0
+      )} aujourd'hui, tu vises ${formatCurrency(
+        c.maxByDownPayment
+      )} ; il te manque ${formatCurrency(
+        c.downPaymentGap
+      )} pour débloquer ton plein potentiel.`;
+    case "a_batir":
+      return `Aujourd'hui, les chiffres ne soutiennent pas encore un achat dans ton secteur — et le savoir maintenant t'évite de perdre du temps. En travaillant le revenu retenu et la mise de fonds, ton projet devient réaliste plus vite que tu penses.`;
   }
 }
 
-export function buildFallbackReport(
-  a: Answers,
-  scoring: ScoringResult
-): AnalysisReport {
-  const notReady = isNotReady(a);
-  const down = a.downPayment ?? 0;
+function stepsFor(verdict: Verdict, answers: Answers, scoring: ScoringResult) {
+  const c = scoring.capacity;
+  const secteurs = regionNames(answers);
+  const secteurTexte = secteurs.length ? secteurs.slice(0, 3).join(", ") : "tes secteurs";
 
-  const strengths: string[] = [];
-  if (down >= 30000)
-    strengths.push("Tu as déjà une mise de fonds solide de côté.");
-  else if (down >= 20000)
-    strengths.push("Tu as déjà une mise de fonds concrète pour démarrer.");
-  if (a.purchaseTimeline === "asap" || a.purchaseTimeline === "0_3_months")
-    strengths.push("Ton échéancier est rapproché, ton projet est concret.");
-  if (a.firstTimeBuyer === "yes")
-    strengths.push("Comme premier acheteur, tu es admissible à des programmes avantageux (CELIAPP, RAP, remboursements).");
-  if (a.currentHousing === "renter" || a.currentHousing === "with_family")
-    strengths.push("Ta situation actuelle te laisse une bonne flexibilité pour acheter.");
-  while (strengths.length < 3)
-    strengths.push("Tu as une vision claire du type de propriété que tu recherches.");
+  // Vendeur-acheteur : le plan porte sur la coordination des deux transactions,
+  // pas sur l'accumulation d'une mise de fonds.
+  if (c.downPaymentSource === "vente") {
+    return [
+      {
+        title: "Faire évaluer ta propriété actuelle",
+        description: `Ton estimation de ${formatCurrency(
+          c.currentHomeValue
+        )} est le point de départ. Une évaluation gratuite donne le montant net qui deviendra ta mise de fonds.`,
+      },
+      {
+        title: "Confirmer ta capacité avec un prêteur",
+        description:
+          "Un prêteur validera ce que tu peux acheter en tenant compte de ton hypothèque actuelle et de tes dettes.",
+      },
+      {
+        title: "Choisir la séquence : vendre d'abord ou acheter d'abord",
+        description:
+          "Achat conditionnel à la vente, prêt-relais, dates de prise de possession : c'est là que se joue la tranquillité d'esprit.",
+      },
+      {
+        title: "Préparer les deux dossiers en parallèle",
+        description: `On prépare la mise en marché pendant qu'on surveille ${secteurTexte} pour ta prochaine propriété.`,
+      },
+    ];
+  }
 
-  const considerations: string[] = [];
-  if (notReady)
-    considerations.push("Avec une mise de fonds sous 20 000 $ en achetant seul, la priorité est de la bâtir davantage.");
-  if (a.currentHousing === "owner" && a.ownerStrategy === "must_sell")
-    considerations.push("La vente de ta propriété actuelle est une étape à coordonner avec ton achat.");
-  considerations.push("Une préapprobation confirmera le budget réel avant de visiter.");
-  while (considerations.length < 3)
-    considerations.push("Cibler tes 3 critères essentiels aidera à rester réaliste.");
+  switch (verdict) {
+    case "pret":
+      return [
+        {
+          title: "Confirmer ton budget avec ton prêteur",
+          description: `Fais valider ${formatCurrency(
+            c.realisticBudget
+          )} noir sur blanc — les dettes personnelles (auto, marges, cartes) ne sont pas incluses dans notre estimation.`,
+        },
+        {
+          title: "Cadrer tes critères avec un courtier",
+          description: `On traduit ton budget en propriétés réelles dans ${secteurTexte}, avec ce qui se vend vraiment à ce prix.`,
+        },
+        {
+          title: "Recevoir les nouveautés avant tout le monde",
+          description: "Une alerte sur mesure te donne quelques heures d'avance sur les propriétés qui correspondent à tes critères.",
+        },
+        {
+          title: "Préparer ta stratégie d'offre",
+          description: "Conditions, inspection, délais : ce qui fait accepter une offre dans ton secteur n'est pas toujours le prix le plus élevé.",
+        },
+      ];
+    case "financement":
+      return [
+        {
+          title: "Obtenir ta préqualification",
+          description: "48 heures et quelques documents suffisent. Sans ça, une offre a beaucoup moins de poids auprès d'un vendeur.",
+        },
+        {
+          title: "Rassembler tes documents",
+          description: "Talons de paie, avis de cotisation, preuve de mise de fonds : les avoir prêts accélère tout le reste.",
+        },
+        {
+          title: "Valider ton budget réel",
+          description: `Notre estimation de ${formatCurrency(
+            c.realisticBudget
+          )} ne tient pas compte de tes dettes — le prêteur, lui, va les inclure.`,
+        },
+        {
+          title: "Commencer les visites en parallèle",
+          description: `Rien n'empêche de visiter dans ${secteurTexte} pendant que ton financement se confirme.`,
+        },
+      ];
+    case "mise_de_fonds":
+      return [
+        {
+          title: "Chiffrer ton objectif de mise de fonds",
+          description: `Vise ${formatCurrency(
+            c.requiredDownForCapacity
+          )} pour atteindre le haut de ta fourchette — il te manque ${formatCurrency(
+            c.downPaymentGap
+          )}.`,
+        },
+        {
+          title: "Activer les bons programmes",
+          description: "RAP, CELIAPP, crédit d'impôt pour l'achat d'une première habitation, remboursement de la TPS/TVQ sur le neuf : plusieurs se cumulent.",
+        },
+        {
+          title: "Explorer la remise en argent hypothécaire",
+          description: "Certains prêteurs offrent une remise (cash-back) qui peut combler une partie de l'écart. À valider avec un courtier hypothécaire.",
+        },
+        {
+          title: "Rester actif dans ta recherche",
+          description: `On peut déjà surveiller ${secteurTexte} pour toi et t'avertir quand une propriété entre dans ton budget actuel.`,
+        },
+      ];
+    case "a_batir":
+      return [
+        {
+          title: "Faire le point avec un courtier hypothécaire",
+          description: "Un appel gratuit permet de voir précisément quel revenu et quelle mise de fonds débloqueraient ton projet.",
+        },
+        {
+          title: "Bâtir ta mise de fonds avec le CELIAPP",
+          description: "Jusqu'à 8 000 $ par année, déductible d'impôt, et retirable sans impôt pour une première propriété.",
+        },
+        {
+          title: "Stabiliser le revenu retenu",
+          description: "Les prêteurs veulent un historique. Quelques mois de stabilité changent complètement le montant accordé.",
+        },
+        {
+          title: "Se donner une échéance réaliste",
+          description: "Un plan sur 12 à 24 mois vaut mieux qu'une offre refusée. On reste disponibles quand tu seras prêt.",
+        },
+      ];
+  }
+}
 
-  const recommendedAdjustments: string[] = [];
-  if (notReady)
-    recommendedAdjustments.push("Acheter à plusieurs (conjoint, famille) rendrait le projet possible plus rapidement.");
-  recommendedAdjustments.push("Faire valider ton financement précisera ce qui est réellement à ta portée.");
-  if (a.firstTimeBuyer === "yes")
-    recommendedAdjustments.push("Explorer le CELIAPP et le RAP pour maximiser ta mise de fonds.");
-  while (recommendedAdjustments.length < 3)
-    recommendedAdjustments.push("Prioriser tes critères essentiels élargit les options qui te conviennent.");
+function marketInsightFor(answers: Answers): string {
+  const secteurs = regionNames(answers);
+  const secteur = secteurs[0] ?? "ton secteur";
+  return `Dans ${secteur}, le budget qui compte n'est pas celui affiché : ce sont les propriétés réellement disponibles dans ta fourchette. Un courtier acheteur voit les inscriptions au moment où elles entrent sur le marché, et connaît les propriétés qui n'ont pas encore été annoncées.`;
+}
 
-  const nextSteps = [
-    notReady
-      ? "Établir un plan de mise de fonds (épargne, CELIAPP, don familial)."
-      : "Faire une préapprobation à jour pour confirmer ton budget réel.",
-    "Clarifier ta mise de fonds et les programmes auxquels tu es admissible.",
-    "Cibler les secteurs et types de propriété qui te conviennent.",
-    `Valider le tout avec ${broker.name} pour passer à l'action.`,
+export function buildFallbackReport(answers: Answers, scoring: ScoringResult): Report {
+  const c = scoring.capacity;
+  const verdict = scoring.verdict;
+
+  const stats = [
+    {
+      label: "Ce que ta situation pourrait supporter",
+      value: formatRange(c.capacityLow, c.capacityHigh),
+      detail: NUANCE_CAPACITE,
+    },
+    {
+      label: "Budget réaliste aujourd'hui",
+      value: formatCurrency(c.realisticBudget),
+      detail:
+        c.downPaymentSource === "vente"
+          ? "Sous réserve du produit net de la vente de ta propriété actuelle."
+          : c.limitedBy === "mise_de_fonds"
+          ? "Ce que ta mise de fonds actuelle te permet de viser dès maintenant."
+          : "Ce que ta situation globale te permet de viser dès maintenant.",
+    },
+    {
+      label: "Paiement mensuel estimé",
+      value: `${formatCurrency(c.monthlyPayment)} / mois`,
+      detail: `Capital et intérêts seulement, à un taux estimé de ${c.mortgageRate
+        .toString()
+        .replace(".", ",")} % sur ${c.amortizationYears} ans. Taxes et assurances en sus.`,
+    },
+    {
+      label: "Mise de fonds visée",
+      value: formatCurrency(c.requiredDownForCapacity),
+      detail:
+        c.downPaymentSource === "vente"
+          ? `À confirmer avec le produit net de ta vente (propriété estimée à ${formatCurrency(
+              c.currentHomeValue
+            )}).`
+          : c.downPaymentGap > 0
+          ? `Il te manque ${formatCurrency(c.downPaymentGap)} pour débloquer ta pleine capacité.`
+          : "Ta mise de fonds actuelle couvre déjà le minimum exigé pour ta capacité.",
+    },
   ];
 
   return {
-    headline: headlineFor(a),
-    summary: notReady
-      ? "Ton projet est prometteur, mais pas encore prêt à passer à l'action. En bâtissant ta mise de fonds — ou en achetant à plusieurs — tu te rapproches d'un achat réaliste."
-      : `Ton projet d'achat ${TIMELINE_LABEL[a.purchaseTimeline ?? "exploring"]} tient la route. La prochaine étape est de faire valider ton financement pour confirmer ce qui est à ta portée.`,
-    projectProfile: `${a.firstTimeBuyer === "yes" ? "Premier achat" : "Nouvel achat"} · secteur ${a.region ?? "à préciser"} · ${a.bedrooms ?? "?"} chambre(s).`,
-    fitLevel: scoring.projectFit,
-    strengths: strengths.slice(0, 3),
-    considerations: considerations.slice(0, 3),
-    recommendedAdjustments: recommendedAdjustments.slice(0, 3),
-    nextSteps,
-    disclaimer: STANDARD_DISCLAIMER,
+    headline: HEADLINES[verdict],
+    summary: summaryFor(verdict, answers, scoring),
+    stats,
+    steps: stepsFor(verdict, answers, scoring),
+    marketInsight: marketInsightFor(answers),
   };
 }
+
+export const VERDICT_HEADLINES = HEADLINES;

@@ -1,105 +1,132 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { Answers, AnalysisReport } from "@/lib/types";
-import { isNotReady, scoreAnswers } from "@/lib/scoring";
-import { buildFallbackReport, STANDARD_DISCLAIMER } from "@/lib/fallbackReport";
-import { broker } from "@/lib/broker";
+import { computeScoring } from "@/lib/scoring";
+import { buildFallbackReport, regionNames } from "@/lib/fallbackReport";
+import type { AnalyzeResponse, Answers, Report } from "@/lib/types";
 
 export const runtime = "nodejs";
 
-const SYSTEM_PROMPT = `Tu es un assistant d'analyse de projet d'achat immobilier au Québec, pour les clients d'un courtier hypothécaire. Tu aides un premier acheteur à comprendre où il en est dans sa préparation : sa mise de fonds, son secteur, son type de propriété, ses critères, son échéancier et sa situation résidentielle. Tu ne remplaces ni un courtier hypothécaire ni un courtier immobilier. Tu ne calcules JAMAIS la capacité d'emprunt. Tu n'inventes aucune statistique, aucun prix, aucune propriété, aucune donnée de marché, aucune disponibilité. Tu utilises seulement les données reçues. Si des données manquent, tu le dis. Tu ne promets jamais qu'un achat sera possible. Si le projet n'est pas prêt (mise de fonds < 20 000 $ en achetant seul), dis-le et recommande de bâtir la mise de fonds ou d'acheter à plusieurs. Tu encourages toujours à valider le financement avec le courtier. Ton simple, rassurant, direct, français canadien (tutoiement). Retourne uniquement le JSON demandé, sans markdown.`;
+const SYSTEM_PROMPT = `Tu es un expert en immobilier résidentiel québécois (Grand Montréal) qui rédige un rapport personnalisé, honnête et encourageant pour une personne qui veut ACHETER une propriété.
 
-function buildUserPrompt(a: Answers, deterministic: object): string {
-  return `Voici les réponses de l'acheteur (JSON) :
-${JSON.stringify(a, null, 2)}
+Ton ton : chaleureux, professionnel, en français (tutoiement), jamais alarmiste, jamais commercial.
 
-Éléments déterministes déjà calculés (à respecter, ne pas recalculer) :
-${JSON.stringify(deterministic, null, 2)}
+Tu reçois les réponses du formulaire, un calcul de capacité d'achat déterministe et un score (0-100). Tu dois produire un rapport JSON STRICTEMENT au format demandé. Ne dévie pas du schéma.
 
-Le courtier est ${broker.name} (${broker.title}, ${broker.franchise}, ${broker.region}).
+Règles absolues :
+- N'INVENTE JAMAIS de chiffres. Utilise UNIQUEMENT les montants fournis dans "scoring.capacity".
+- La capacité d'achat se présente TOUJOURS comme une FOURCHETTE : "entre capacityLow et capacityHigh". N'affiche JAMAIS maxByIncome seul — c'est une estimation interne (4,5 × le revenu retenu), pas un montant à annoncer.
+- Rappelle que le montant réel varie selon les dettes et les paiements mensuels, et qu'un courtier appellera pour confirmer (ou référera à un courtier hypothécaire).
+- Si "capacity.downPaymentSource" vaut "vente", la personne doit VENDRE avant d'acheter : sa mise de fonds sortira de cette vente (propriété estimée à currentHomeValue). Ne parle jamais d'un manque de mise de fonds dans ce cas — parle de coordonner la vente et l'achat.
+- Ne présente jamais ces montants comme une préapprobation : ce sont des estimations à valider avec un prêteur.
+- Si le verdict est "mise_de_fonds", le message central est : la capacité est là, c'est la mise de fonds qui bride — et elle se bâtit (RAP, CELIAPP, remise en argent, don familial).
+- Si "financement", pousse la préqualification comme prochaine étape unique.
+- Si "pret", confirme et oriente vers la recherche active de propriétés.
+- Si "a_batir", sois bienveillant : explique ce qui doit bouger (revenu retenu, mise de fonds) sans culpabiliser.
+- "steps" : exactement 4 étapes courtes et actionnables.
+- "stats" : exactement 4 entrées, dans cet ordre : capacité soutenue, budget réaliste, paiement mensuel estimé, mise de fonds visée.
+- "marketInsight" : une observation utile sur le marché local pour un acheteur, sans chiffre inventé.
+- Pas de markdown, pas d'emojis, pas de formules creuses.`;
 
-Rédige un rapport d'analyse en respectant EXACTEMENT ce schéma JSON :
-{
-  "headline": "verdict court, ex. 'Ton projet est réaliste' | 'bien aligné' | 'ambitieux' | 'mérite une validation' | 'en préparation'",
-  "summary": "2-3 phrases",
-  "projectProfile": "une phrase résumant le profil",
-  "fitLevel": "strong | possible | tight | unknown",
-  "strengths": ["3 éléments"],
-  "considerations": ["3 éléments"],
-  "recommendedAdjustments": ["3 éléments"],
-  "nextSteps": ["4 étapes"],
-  "disclaimer": "reprends l'avertissement standard fourni"
-}`;
+function extractJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // fallthrough
+  }
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
-function isValidReport(r: unknown): r is AnalysisReport {
+function isValidReport(r: unknown): r is Report {
   if (!r || typeof r !== "object") return false;
-  const o = r as Record<string, unknown>;
+  const x = r as Record<string, unknown>;
   return (
-    typeof o.headline === "string" &&
-    typeof o.summary === "string" &&
-    Array.isArray(o.strengths) &&
-    Array.isArray(o.considerations) &&
-    Array.isArray(o.recommendedAdjustments) &&
-    Array.isArray(o.nextSteps)
+    typeof x.headline === "string" &&
+    typeof x.summary === "string" &&
+    Array.isArray(x.stats) &&
+    x.stats.length >= 3 &&
+    Array.isArray(x.steps) &&
+    x.steps.length >= 3 &&
+    typeof x.marketInsight === "string"
   );
 }
 
 export async function POST(req: Request) {
-  let answers: Answers;
+  let body: { answers?: Answers };
   try {
-    const body = await req.json();
-    answers = body.answers ?? {};
+    body = await req.json();
   } catch {
-    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const answers = body.answers ?? {};
+  const scoring = computeScoring(answers);
+  const fallback = buildFallbackReport(answers, scoring);
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    const payload: AnalyzeResponse = { scoring, report: fallback, generatedBy: "fallback" };
+    return NextResponse.json(payload);
   }
 
-  const scoring = scoreAnswers(answers);
-  const deterministic = {
-    projectFit: scoring.projectFit,
-    segment: scoring.segment,
-    notReady: isNotReady(answers),
-    disclaimer: STANDARD_DISCLAIMER,
-  };
-
-  let report: AnalysisReport | null = null;
-  let generatedBy: "claude" | "fallback" = "fallback";
-
-  if (process.env.ANTHROPIC_API_KEY) {
-    try {
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const msg = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1200,
-        system: SYSTEM_PROMPT,
-        messages: [
-          { role: "user", content: buildUserPrompt(answers, deterministic) },
+  try {
+    const client = new Anthropic({ apiKey });
+    const userMessage = {
+      answers: { ...answers, secteurs: regionNames(answers) },
+      scoring,
+      fallbackHints: {
+        headline: fallback.headline,
+        summary: fallback.summary,
+        marketInsight: fallback.marketInsight,
+      },
+      requiredSchema: {
+        headline: "phrase d'accroche, 1 ligne",
+        summary: "résumé, 2-3 phrases",
+        stats: [
+          { label: "Ce que ta situation pourrait supporter", value: "X $", detail: "..." },
+          { label: "Budget réaliste aujourd'hui", value: "X $", detail: "..." },
+          { label: "Paiement mensuel estimé", value: "X $ / mois", detail: "..." },
+          { label: "Mise de fonds visée", value: "X $", detail: "..." },
         ],
-      });
-      const text = msg.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("")
-        .trim();
-      const jsonStart = text.indexOf("{");
-      const jsonEnd = text.lastIndexOf("}");
-      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-      if (isValidReport(parsed)) {
-        report = parsed;
-        generatedBy = "claude";
-      }
-    } catch {
-      report = null;
+        steps: [{ title: "...", description: "..." }],
+        marketInsight: "observation de marché pertinente pour un acheteur dans le Grand Montréal",
+      },
+    };
+
+    const completion = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1500,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Voici les données. Réponds uniquement avec un objet JSON valide qui respecte le schéma.\n\n${JSON.stringify(
+            userMessage,
+            null,
+            2
+          )}`,
+        },
+      ],
+    });
+
+    const textBlock = completion.content.find((c) => c.type === "text");
+    const text = textBlock && textBlock.type === "text" ? textBlock.text : "";
+    const parsed = extractJson(text);
+
+    if (isValidReport(parsed)) {
+      const payload: AnalyzeResponse = { scoring, report: parsed, generatedBy: "claude" };
+      return NextResponse.json(payload);
     }
+  } catch (err) {
+    console.error("[analyze] Claude error", err);
   }
 
-  if (!report) {
-    report = buildFallbackReport(answers, scoring);
-  }
-
-  // Toujours forcer fitLevel sur la valeur déterministe.
-  report.fitLevel = scoring.projectFit;
-  if (!report.disclaimer) report.disclaimer = STANDARD_DISCLAIMER;
-
-  return NextResponse.json({ scoring, report, generatedBy });
+  const payload: AnalyzeResponse = { scoring, report: fallback, generatedBy: "fallback" };
+  return NextResponse.json(payload);
 }

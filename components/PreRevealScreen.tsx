@@ -1,53 +1,104 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
 
-export function PreRevealScreen({
-  onReveal,
-}: {
-  onReveal: (mode: "full" | "summary") => void;
-}) {
-  const [enabled, setEnabled] = useState(false);
+export type RevealChoice = "yes" | "no";
+
+interface Props {
+  onContinue: (choice: RevealChoice) => void;
+}
+
+// Délai avant que les boutons soient cliquables.
+// Empêche les clics fantômes de l'étape précédente de traverser cet écran.
+const CLICK_GUARD_MS = 700;
+
+export default function PreRevealScreen({ onContinue }: Props) {
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
-    const t = setTimeout(() => setEnabled(true), 700);
+    const t = setTimeout(() => setReady(true), CLICK_GUARD_MS);
     return () => clearTimeout(t);
   }, []);
 
+  const handleClick = (choice: RevealChoice) => {
+    if (!ready) return;
+    onContinue(choice);
+  };
+
   return (
-    <section className="relative flex min-h-[100dvh] flex-col items-center justify-center px-6 text-center">
+    <div className="min-h-screen flex items-center justify-center px-5 sm:px-8 py-16">
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mx-auto max-w-md"
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-xl w-full text-center"
       >
-        <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-full border border-brand-600/40 bg-ink-soft text-2xl">
-          ✨
-        </div>
-        <h2 className="font-display text-3xl text-brand-100">
-          Ton analyse est prête
-        </h2>
-        <p className="mt-3 text-sm text-brand-200">
-          On a évalué la cohérence de ton projet et tes prochaines étapes.
+        {/* Icône check */}
+        <motion.div
+          initial={{ scale: 0, rotate: -20 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ delay: 0.1, duration: 0.6, type: "spring", stiffness: 160, damping: 14 }}
+          className="mx-auto mb-7 w-16 h-16 rounded-full bg-gradient-to-br from-emerald-400/25 to-[var(--color-brand-500)]/15 border border-emerald-500/40 flex items-center justify-center shadow-[0_10px_40px_-10px_rgba(0, 0, 0, 0.45)]"
+        >
+          <svg className="w-7 h-7 text-emerald-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M4 10L8 14L16 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </motion.div>
+
+        <p className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-brand-300)] mb-3">
+          Analyse complète
+        </p>
+        <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl text-[var(--color-brand-100)] leading-[1.05] tracking-tight text-balance">
+          Ton portrait est prêt.
+        </h1>
+        <p className="mt-5 text-base sm:text-lg text-slate-400 leading-relaxed text-balance max-w-md mx-auto">
+          Entre tes informations pour débloquer ton pouvoir d&apos;achat et recevoir
+          ton analyse complète, entièrement gratuite.
         </p>
 
-        <div className="mt-8 flex flex-col items-center gap-3">
-          <button
-            disabled={!enabled}
-            onClick={() => onReveal("full")}
-            className="w-full rounded-full bg-gradient-to-r from-brand-400 to-brand-600 px-8 py-4 font-display text-base text-ink transition enabled:hover:brightness-110 enabled:active:scale-[0.98] disabled:opacity-50"
-          >
-            Oui, je veux voir mon analyse
-          </button>
-          <button
-            disabled={!enabled}
-            onClick={() => onReveal("summary")}
-            className="text-sm text-brand-200 underline underline-offset-4 transition enabled:hover:text-brand-100 disabled:opacity-50"
-          >
-            Je veux seulement voir un résumé
-          </button>
-        </div>
+        {/* Bouton primaire — option recommandée */}
+        <motion.button
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.6 }}
+          onClick={() => handleClick("yes")}
+          disabled={!ready}
+          className="
+            group mt-10 w-full
+            relative overflow-hidden
+            rounded-2xl
+            bg-gradient-to-b from-[var(--color-brand-500)] to-[var(--color-brand-700)]
+            text-white
+            px-6 py-5
+            shadow-[0_20px_50px_-15px_rgba(58,109,255,0.6)]
+            hover:shadow-[0_25px_60px_-10px_rgba(58,109,255,0.7)]
+            hover:-translate-y-0.5
+            transition-all duration-300
+            disabled:opacity-70 disabled:cursor-wait disabled:translate-y-0
+          "
+        >
+          <span className="block font-medium text-base sm:text-lg">
+            Voir mon pouvoir d&apos;achat
+          </span>
+          <span className="block text-xs sm:text-sm text-white/70 mt-1">
+            Analyse complète et gratuite
+          </span>
+          <span className="absolute right-5 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5">
+            {ready ? (
+              <svg className="w-4 h-4 transition-transform group-hover:translate-x-1" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M5 10h10M11 6l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <span className="flex gap-0.5">
+                <span className="w-1 h-1 rounded-full bg-white/[0.09] animate-pulse" />
+                <span className="w-1 h-1 rounded-full bg-white/[0.09] animate-pulse" style={{ animationDelay: "0.15s" }} />
+                <span className="w-1 h-1 rounded-full bg-white/[0.09] animate-pulse" style={{ animationDelay: "0.3s" }} />
+              </span>
+            )}
+          </span>
+        </motion.button>
       </motion.div>
-    </section>
+    </div>
   );
 }
